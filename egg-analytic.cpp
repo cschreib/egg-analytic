@@ -117,7 +117,7 @@ int phypp_main(int argc, char* argv[]) {
     uint_t nzbin = zb.size()-1;
     std::string suffix = "rebin2";
     // std::string filters_dir = egg_share_dir+"filter-db/";
-    std::string filters_dir = "/home/cschreib/code/vis-psf-generator/SHE_PSM_toolkit/scripts/averaging/";
+    std::string filters_dir = "/home/cschreib/code/egg-analytic/";
 
     // Define instead a fixed magnitude cut
     double maglim = 24.5;
@@ -134,7 +134,7 @@ int phypp_main(int argc, char* argv[]) {
     const double area = 1.0*sqr(dpi/180.0)/(4*dpi); // fraction of the sky we simulate
 
     // Read SED library
-    vec2u use;
+    vec2b use;
     vec3f sed, lam;
     vec2f bvj, buv;
     fits::read_table(egg_share_dir+"opt_lib_fast_hd.fits", ftable(use, lam, sed, buv, bvj));

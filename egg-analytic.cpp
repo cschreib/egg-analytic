@@ -152,48 +152,59 @@ int phypp_main(int argc, char* argv[]) {
     csmf cs_mf;
 
     // Base arrays
-    const vec1d m  = rgen(4.0,  13.0, 1e2);                                  const double dm  = m[1]  - m[0];
+    const vec1d m  = rgen(4.0,  13.0, 1e2); const double dm  = m[1]  - m[0];
     const vec1d nm = e10(m);
-    const vec1d a  = rgen(-5.0, 6.0,  5e1);                                  const double da  = a[1]  - a[0];
-    const vec1d b  = rgen(-0.1, 0.2,  5e1);                                  const double db  = b[1]  - b[0];
-    const vec1d uv = rgen(-1.0, 3.0,  4e2); const uint_t num_uv = uv.size(); const double duv = uv[1] - uv[0];
-    const vec1d vj = rgen(-1.0, 3.0,  4e2); const uint_t num_vj = vj.size(); const double dvj = vj[1] - vj[0];
-    const vec1d bt = rgen(0.0,  1.0,  1e2);                                  const double dbt = bt[1] - bt[0];
+    const vec1d a  = rgen(-5.0, 6.0,  5e1);
+    const vec1d b  = rgen(-0.1, 0.2,  5e1);
+    const vec1d uv = bin_center(buv);
+    const vec1d vj = bin_center(bvj);
+    const vec1d bt = rgen(0.0,  1.0,  1e2);
 
-    // Integration ranges for each UVJ bin
-    vec1u uv0(use.dims[0]), uv1(use.dims[0]);
-    vec1u vj0(use.dims[1]), vj1(use.dims[1]);
-    for (uint_t iuv : range(use.dims[0])) {
-        uv0[iuv] = lower_bound(uv, buv(0,iuv));
-        uv1[iuv] = upper_bound(uv, buv(1,iuv));
+    vec2d map_vj(use.dims), map_uv(use.dims);
+    for (uint_t i : range(uv)) {
+        map_uv(i,_) = uv[i];
     }
-    for (uint_t ivj : range(use.dims[1])) {
-        vj0[ivj] = lower_bound(vj, bvj(0,ivj));
-        vj1[ivj] = upper_bound(vj, bvj(1,ivj));
+    for (uint_t i : range(vj)) {
+        map_vj(_,i) = vj[i];
     }
-
-    auto resample_uvj = [&](vec2d orig) {
-        vec2d res(use.dims);
-        for (uint_t iduv : range(use.dims[0]))
-        for (uint_t idvj : range(use.dims[1])) {
-            if (!use.safe(iduv,idvj)) continue;
-            for (uint_t iuv = uv0.safe[iduv]; iuv < uv1.safe[iduv]; ++iuv)
-            for (uint_t ivj = vj0.safe[idvj]; ivj < vj1.safe[idvj]; ++ivj) {
-                res.safe(iduv,idvj) += orig.safe(iuv,ivj)*dvj*duv;
-            }
-        }
-
-        res /= total(res);
-        return res;
-    };
 
     // Base distributions
-    auto gaussian = vectorize_lambda([](double x, double mu, double sigma) {
-        return exp(-sqr(x-mu)/(2.0*sqr(sigma)))/(sigma*sqrt(2*dpi));
-    });
-    auto lognormal = vectorize_lambda([](double x, double mu, double sigma) {
-        return exp(-sqr(log(x/mu))/(2.0*sqr(sigma)))/(x*sigma*sqrt(2*dpi));
-    });
+    auto gaussian_integrate = [](double x1, double x2, double mu, double sigma) {
+        // Sample (incorect!)
+        // return exp(-sqr(x-mu)/(2.0*sqr(sigma)))/(sigma*sqrt(2*dpi));
+
+        // Integrate
+        return 0.5*(erf((x2 - mu)/(sigma*sqrt(2.0))) - erf((x1 - mu)/(sigma*sqrt(2.0))));
+    };
+    auto gaussian = [&](const vec1d& x, double mu, double sigma) {
+        vec1d ret(x.dims);
+        for (uint_t ix : range(x)) {
+            const double x1 = (ix == 0          ? x.safe[ix] : 0.5*(x.safe[ix] + x.safe[ix-1]));
+            const double x2 = (ix == x.size()-1 ? x.safe[ix] : 0.5*(x.safe[ix] + x.safe[ix+1]));
+            ret.safe[ix] = gaussian_integrate(x1, x2, mu, sigma);
+        }
+
+        return ret;
+    };
+    auto lognormal_integrate = [](double x1, double x2, double mu, double sigma) {
+        // Sample (incorect!)
+        // return exp(-sqr(log(x/mu))/(2.0*sqr(sigma)))/(x*sigma*sqrt(2*dpi));
+
+        // Integrate
+        double up = erf(log(x2/mu)/(sigma*sqrt(2.0)));
+        double low = (x1 > 0.0 ? erf(log(x1/mu)/(sqrt(2.0)*sigma)) : -1.0);
+        return 0.5*(up - low);
+    };
+    auto lognormal = [&](const vec1d& x, double mu, double sigma) {
+        vec1d ret(x.dims);
+        for (uint_t ix : range(x)) {
+            const double x1 = (ix == 0          ? x.safe[ix] : 0.5*(x.safe[ix] + x.safe[ix-1]));
+            const double x2 = (ix == x.size()-1 ? x.safe[ix] : 0.5*(x.safe[ix] + x.safe[ix+1]));
+            ret.safe[ix] = lognormal_integrate(x1, x2, mu, sigma);
+        }
+
+        return ret;
+    };
     auto upper_lognormal = vectorize_lambda([](double xlow, double mu, double sigma) {
         return 0.5 - 0.5*erf(log(xlow/mu)/(sigma*sqrt(2.0)));
     });
@@ -297,9 +308,11 @@ int phypp_main(int argc, char* argv[]) {
             }
 
             // Pre-compute stuff
-            const vec1d a0 = 0.58*erf(m - 10.0) + 1.39;
-            const vec1d a1 = -0.34 + 0.3*max(m - 10.35, 0.0);
-            const vec1d abar = min(a0 + a1*min(zf, 3.3), 2.0);
+            const vec1d abar = [&]() {
+                const vec1d a0 = 0.58*erf(m - 10.0) + 1.39;
+                const vec1d a1 = -0.34 + 0.3*max(m - 10.35, 0.0);
+                return min(a0 + a1*min(zf, 3.3), 2.0);
+            }();
             const vec1d asig = 0.1 + 0.3*clamp(zf-1.0, 0, 1)*(0.17 + clamp(1.0 - abs(m - 10.3), 0, 1));
             const vec1d bbar = 0.1*(m - 11.0);
 
@@ -333,54 +346,54 @@ int phypp_main(int argc, char* argv[]) {
                 const double mm = nm.safe[im];
 
                 // pblue
-                vec2d pblue(num_uv, num_vj); {
+                vec2d pblue(use.dims); {
                     vec1d pa = gaussian(a, abar.safe[im], asig.safe[im]);
                     for (uint_t ia : range(a)) {
                         vec1d puv = gaussian(uv, 2*col_cor + 0.45 + 0.545*a.safe[ia], 0.12);
                         vec1d pvj = gaussian(vj,   col_cor +        0.838*a.safe[ia], 0.12);
-                        for (uint_t ivj : range(vj))
-                        for (uint_t iuv : range(uv)) {
-                            pblue.safe(iuv,ivj) += puv.safe(iuv)*pvj.safe(ivj)*pa.safe[ia]*da;
+                        for (uint_t iuv : range(uv))
+                        for (uint_t ivj : range(vj)) {
+                            pblue.safe(iuv,ivj) += puv.safe[iuv]*pvj.safe[ivj]*pa.safe[ia];
                         }
                     }
 
-                    pblue = resample_uvj(pblue);
+                    pblue[where(!use)] = 0;
+                    pblue /= total(pblue);
                 }
 
                 // pred
-                vec2d pred(num_uv, num_vj); {
+                vec2d pred(use.dims); {
                     vec1d pb = gaussian(b, bbar.safe[im], 0.1);
-                    pb[0]          += lower_gaussian(-0.1, bbar.safe[im], 0.10)/db;
-                    pb[b.size()-1] += upper_gaussian(0.2, bbar.safe[im], 0.10)/db;
+                    pb.safe[0]           += lower_gaussian(-0.1, bbar.safe[im], 0.10);
+                    pb.safe[pb.size()-1] += upper_gaussian( 0.2, bbar.safe[im], 0.10);
                     for (uint_t ib : range(b)) {
                         vec1d puv = gaussian(uv, 2*col_cor + 1.85 + 0.88*b.safe[ib], 0.10);
-                        vec1d pvj = gaussian(vj,   col_cor + 1.25 + b.safe[ib], 0.10);
-                        for (uint_t ivj : range(vj))
-                        for (uint_t iuv : range(uv)) {
-                            pred.safe(iuv,ivj) += puv.safe(iuv)*pvj.safe(ivj)*pb.safe[ib]*db;
+                        vec1d pvj = gaussian(vj,   col_cor + 1.25 +      b.safe[ib], 0.10);
+                        for (uint_t iuv : range(uv))
+                        for (uint_t ivj : range(vj)) {
+                            pred.safe(iuv,ivj) += puv.safe[iuv]*pvj.safe[ivj]*pb.safe[ib];
                         }
                     }
 
-                    pred = resample_uvj(pred);
+                    pred[where(!use)] = 0;
+                    pred /= total(pred);
                 }
-
-                double ttq11  = 0;
-                double ttq12  = 0;
-                double ttq22  = 0;
-                double ttprob = 0;
 
                 // Integrate over galaxy type (SF or QU)
                 for (uint_t it : {0, 1}) {
                     // N(M*,t,z)
-                    const double nmz = dm*dvdz*(it == 0 ?
+                    const double nmz = dz*dm*dvdz*(it == 0 ?
                         cs_mf.evaluate_qu(m.safe[im], zf) : cs_mf.evaluate_sf(m.safe[im], zf));
 
                     // p(B/T | M*,t)
                     const double btbar = (it == 0 ? 0.5*pow(mm/1e10, 0.10) : 0.2*pow(mm/1e10, 0.27));
                     vec1d pbt = lognormal(bt, btbar, 0.2);
-                    pbt.safe[0] = 0;
-                    pbt.safe[bt.size()-1] += upper_lognormal(1.0, btbar, 0.2)/dbt;
-                    pbt *= dbt;
+                    pbt.safe[bt.size()-1] += upper_lognormal(1.0, btbar, 0.2);
+
+                    double ttq11  = 0;
+                    double ttq12  = 0;
+                    double ttq22  = 0;
+                    double ttprob = 0;
 
                     // Integrate over disk SED
                     for (uint_t ised_d : range(bz[0], bz[1])) {
@@ -389,9 +402,6 @@ int phypp_main(int argc, char* argv[]) {
 
                         // pdisk(d | z,M*)
                         const double pdisk = pblue.safe(iduv, idvj);
-
-                        // Ignore SEDs with too low probability to save time
-                        if (pdisk < 1.0/sqr(nsed)) continue;
 
                         // Load stuff
                         const double fdisk = mm*flux.safe(iduv,idvj);
@@ -407,12 +417,9 @@ int phypp_main(int argc, char* argv[]) {
                             double pb = pblue.safe(ibuv,ibvj);
                             double pr = pred.safe(ibuv,ibvj);
 
-                            // Ignore SEDs with too low probability to save time
-                            if (pb < 1.0/sqr(nsed) && pr < 1.0/sqr(nsed)) continue;
-
-                            // NB: we factor in the disk p(SED) and N(M*.t.z) here to save time
-                            pb *= pdisk*nmz;
-                            pr *= pdisk*nmz;
+                            // NB: we factor in the disk p(SED) here to save time
+                            pb *= pdisk;
+                            pr *= pdisk;
 
                             // Load stuff
                             const double fbulge = mm*flux.safe(ibuv,ibvj);
@@ -469,14 +476,14 @@ int phypp_main(int argc, char* argv[]) {
                             }
                         }
                     }
-                }
 
-                // Accumulated probability density for this mass bin
-                // This avoids numerical errors
-                tq11  += ttq11;
-                tq12  += ttq12;
-                tq22  += ttq22;
-                tprob += ttprob;
+                    // Accumulated probability density for this mass bin
+                    // This avoids numerical errors
+                    tq11  += ttq11*nmz;
+                    tq12  += ttq12*nmz;
+                    tq22  += ttq22*nmz;
+                    tprob += ttprob*nmz;
+                }
             }
 
             // Average quantities

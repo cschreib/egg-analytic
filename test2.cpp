@@ -25,7 +25,7 @@ public :
 int phypp_main(int argc, char* argv[]) {
     // Configurable options
     double maglim = 24.5;
-    std::string selection_band = "euclid-vis";
+    std::string selection_band = "subaru-B";
     double z = 1.0;
     std::string egg_dir = "./";
 
@@ -53,18 +53,18 @@ int phypp_main(int argc, char* argv[]) {
     gen.generate(z, 0.01);
 
     // Now we need to find the lowest mass at which the completeness is >80%
-    uint_t i80 = gen.m.size();
-    while (i80 > 0) {
-        --i80;
+    uint_t i90 = gen.m.size();
+    while (i90 > 0) {
+        --i90;
 
-        if (gen.ndet[i80]/gen.ntot[i80] < 0.9) {
-            ++i80;
+        if (gen.ndet[i90]/gen.ntot[i90] < 0.9) {
+            ++i90;
             break;
         }
     }
 
     // We have our result!
-    print("the stellar mass 90% completeness is: ", gen.m[i80]);
+    print("the stellar mass 90% completeness is: ", gen.m[i90]);
 
     return 0;
 }

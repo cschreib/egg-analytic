@@ -8,8 +8,8 @@ public :
 
     my_generator() : egg::generator() {}
 
-    void on_generated(double tngal, uint_t im, uint_t it, uint_t ised_d, uint_t ised_b,
-        uint_t ibt, double fdisk, double fbulge) override {
+    void on_generated(uint_t im, uint_t it, uint_t ised_d, uint_t ised_b,
+        uint_t ibt, double tngal, double fdisk, double fbulge) override {
 
         if (ftot >= flim) {
             // We passed the magnitude cut!
@@ -24,7 +24,7 @@ public :
 int phypp_main(int argc, char* argv[]) {
     // Configurable options
     double maglim = 24.5;
-    std::string selection_band = "euclid-vis";
+    std::string selection_band = "subaru-B";
     double z = 1.0;
     std::string egg_dir = "./";
 

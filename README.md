@@ -154,7 +154,7 @@ int phypp_main(int argc, char* argv[]) {
 }
 ```
 
-And we add the code to locate the lowest mass with 80% completeness:
+And we add the code to locate the lowest mass with 90% completeness:
 
 ```c++
 int phypp_main(int argc, char* argv[]) {

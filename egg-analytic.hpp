@@ -118,6 +118,7 @@ namespace egg {
         std::string selection_band;
         double maglim = dnan;
         double area = 1.0; // [deg^2]
+        vec1s filters;
 
         // Implementation parameters
         double logmass_min   = 4.0;
@@ -133,6 +134,7 @@ namespace egg {
         std::string filter_db = share_dir+"filter-db/db.dat";
         bool filter_flambda = false;
         bool filter_photons = false;
+        bool trim_filters = false;
     };
 
     class generator {
@@ -143,7 +145,7 @@ namespace egg {
         vec2b use;
         vec3f sed, lam;
         vec2f bvj, buv;
-        vec2d flux;
+        vec3d flux;
 
         // Mass function
         impl::csmf cs_mf;
@@ -153,6 +155,8 @@ namespace egg {
         cosmo_t cosmo;
         double area = dnan;
         filter_t selection_filter;
+        vec1s filter_names;
+        vec<1,filter_t> filters;
 
         // Base arrays
         vec1d m, nm;
@@ -250,22 +254,47 @@ namespace egg {
 
             // Find selection filter
             phypp_check(get_filter(filter_db, opts.selection_band, selection_filter),
-                "could not find selection filer, aborting");
+                "could not find selection filter, aborting");
+
+            filter_names = opts.filters;
+            phypp_check(get_filters(filter_db, opts.filters, filters),
+                "could not find some filters, aborting");
+
+            // Truncate filters
+            if (opts.trim_filters) {
+                vec1u idg = where(selection_filter.res/max(selection_filter.res) > 1e-3);
+                selection_filter.lam = selection_filter.lam[idg[0]-_-idg[-1]];
+                selection_filter.res = selection_filter.res[idg[0]-_-idg[-1]];
+                for (uint_t l : range(filters)) {
+                    idg = where(filters[l].res/max(filters[l].res) > 1e-3);
+                    filters[l].lam = filters[l].lam[idg[0]-_-idg[-1]];
+                    filters[l].res = filters[l].res[idg[0]-_-idg[-1]];
+                }
+            }
 
             // Apply filter definition
             if (opts.filter_flambda) {
                 // Filter is defined such that it must integrate f_lambda and not f_nu
                 // f_lambda*r(lambda) ~ f_nu*[r(lambda)/lambda^2]
                 selection_filter.res /= sqr(selection_filter.lam);
+                for (uint_t l : range(filters)) {
+                    filters[l].res /= sqr(filters[l].lam);
+                }
             }
             if (opts.filter_photons) {
-                // Filter is defined such that is integrates photons and not energy
+                // Filter is defined such that it integrates photons and not energy
                 // n(lambda)*r(lambda) ~ f(lambda)*[r(lambda)*lambda]
                 selection_filter.res *= selection_filter.lam;
+                for (uint_t l : range(filters)) {
+                    filters[l].res *= filters[l].lam;
+                }
             }
 
             // Re-normalize filter
             selection_filter.res /= integrate(selection_filter.lam, selection_filter.res);
+            for (uint_t l : range(filters)) {
+                filters[l].res /= integrate(filters[l].lam, filters[l].res);
+            }
 
             initialized = true;
         }
@@ -273,7 +302,7 @@ namespace egg {
         virtual void on_disk_sed_changed(uint_t ised_d) {}
         virtual void on_bulge_sed_changed(uint_t ised_b) {}
         virtual void on_generated(uint_t im, uint_t it, uint_t ised_d, uint_t ised_b,
-            uint_t ibt, double ngal, double fdisk, double fbulge) = 0;
+            uint_t ibt, double ngal, const vec1d& fdisk, const vec1d& fbulge) = 0;
 
         void generate(double zf, double dz) {
             phypp_check(initialized, "please first call initialize() with your desired survey setup");
@@ -295,7 +324,7 @@ namespace egg {
             double df = lumdist(zf, cosmo);
 
             // Pre-compute fluxes in selection band in library
-            flux.resize(use.dims);
+            flux.resize(use.dims, filters.size()+1);
             for (uint_t iuv : range(flux.dims[0]))
             for (uint_t ivj : range(flux.dims[1])) {
                 if (!use.safe(iuv, ivj)) continue;
@@ -306,13 +335,19 @@ namespace egg {
                 tsed = lsun2uJy(zf, df, tlam, tsed);
                 tlam *= (1.0 + zf);
 
-                flux.safe(iuv, ivj) = ML_cor*sed2flux(
+                flux.safe(iuv, ivj, 0) = ML_cor*sed2flux(
                     selection_filter.lam, selection_filter.res, tlam, tsed
                 );
+
+                for (uint_t l : range(filters)) {
+                    flux.safe(iuv, ivj, l+1) = ML_cor*sed2flux(
+                        filters[l].lam, filters[l].res, tlam, tsed
+                    );
+                }
             }
 
             // Find minimum mass we need to bother with
-            const double mmin = log10(min(flim/flux));
+            const double mmin = log10(min(flim/flux(_,_,0)));
             const uint_t m0 = lower_bound(m, mmin);
 
             // Integrate over stellar masses
@@ -378,7 +413,7 @@ namespace egg {
                         const double pdisk = nmz*pblue.safe(iduv, idvj);
 
                         // Load stuff
-                        const double fdisk = mm*flux.safe(iduv,idvj);
+                        const vec1d fdisk = mm*flux.safe(iduv,idvj,_);
 
                         // Integrate over bulge SED
                         for (uint_t ised_b : range(use)) {
@@ -395,7 +430,7 @@ namespace egg {
                             const double pr = pdisk*pred.safe(ibuv,ibvj);
 
                             // Load stuff
-                            const double fbulge = mm*flux.safe(ibuv,ibvj);
+                            const vec1d fbulge = mm*flux.safe(ibuv,ibvj,_);
 
                             // Integrate over B/T
                             for (uint_t ibt : range(bt)) {

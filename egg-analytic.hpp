@@ -131,6 +131,8 @@ namespace egg {
         // Resources
         std::string share_dir = "./";
         std::string filter_db = share_dir+"filter-db/db.dat";
+        bool filter_flambda = false;
+        bool filter_photons = false;
     };
 
     class generator {
@@ -250,6 +252,21 @@ namespace egg {
             phypp_check(get_filter(filter_db, opts.selection_band, selection_filter),
                 "could not find selection filer, aborting");
 
+            // Apply filter definition
+            if (opts.filter_flambda) {
+                // Filter is defined such that it must integrate f_lambda and not f_nu
+                // f_lambda*r(lambda) ~ f_nu*[r(lambda)/lambda^2]
+                selection_filter.res /= sqr(selection_filter.lam);
+            }
+            if (opts.filter_photons) {
+                // Filter is defined such that is integrates photons and not energy
+                // n(lambda)*r(lambda) ~ f(lambda)*[r(lambda)*lambda]
+                selection_filter.res *= selection_filter.lam;
+            }
+
+            // Re-normalize filter
+            selection_filter.res /= integrate(selection_filter.lam, selection_filter.res);
+
             initialized = true;
         }
 
@@ -286,9 +303,7 @@ namespace egg {
                 vec1d tlam = lam.safe(iuv, ivj, _);
                 vec1d tsed = sed.safe(iuv, ivj, _);
 
-                // TODO: change this to fnu->flambda
                 tsed = lsun2uJy(zf, df, tlam, tsed);
-                // tsed *= selection_filter.rlam/tlam; // photon-weighted flux
                 tlam *= (1.0 + zf);
 
                 flux.safe(iuv, ivj) = ML_cor*sed2flux(

@@ -346,6 +346,9 @@ namespace egg {
                 }
             }
 
+            // Select probability threshold below which SEDs are ignored
+            const double pthr = 0.1/count(use);
+
             // Find minimum mass we need to bother with
             const double mmin = log10(min(flim/flux(_,_,0)));
             const uint_t m0 = lower_bound(m, mmin);
@@ -412,6 +415,9 @@ namespace egg {
                         // pdisk(d | z,M*) * N(M*,t,z)
                         const double pdisk = nmz*pblue.safe(iduv, idvj);
 
+                        // Skip improbable SEDs
+                        if (pdisk < nmz*pthr) continue;
+
                         // Load stuff
                         const vec1d fdisk = mm*flux.safe(iduv,idvj,_);
 
@@ -428,6 +434,9 @@ namespace egg {
                             // p(blue) * pdisk(d | z,M*) * N(M*,t,z)
                             const double pb = pdisk*pblue.safe(ibuv,ibvj);
                             const double pr = pdisk*pred.safe(ibuv,ibvj);
+
+                            // Skip improbable SEDs
+                            if (pb < pdisk*pthr && pr < pdisk*pthr) continue;
 
                             // Load stuff
                             const vec1d fbulge = mm*flux.safe(ibuv,ibvj,_);

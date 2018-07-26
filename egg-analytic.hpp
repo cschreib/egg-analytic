@@ -414,12 +414,26 @@ namespace egg {
 
                         // pdisk(d | z,M*) * N(M*,t,z)
                         const double pdisk = nmz*pblue.safe(iduv, idvj);
-
-                        // Skip improbable SEDs
-                        if (pdisk < nmz*pthr) continue;
+                        const double pred_bt1 = nmz*pred.safe(iduv, idvj);
 
                         // Load stuff
                         const vec1d fdisk = mm*flux.safe(iduv,idvj,_);
+
+                        // Optimization: send B/T=0 now, don't need to iterate over SED bulge
+                        if (pdisk >= nmz*pthr) {
+                            on_generated(im, it, ised_d, use.safe[0],
+                                0, pbt.safe[0]*pdisk, fdisk, fdisk*0.0);
+                        }
+                        // Optimization: send B/T=1 now, don't need to iterate over SED disk
+                        // (trick: pretend we're actually iterating over SED bulge now)
+                        if (pred_bt1 >= nmz*pthr) {
+                            on_bulge_sed_changed(ised_d);
+                            on_generated(im, it, use.safe[0], ised_d,
+                                bt.size()-1, pbt.safe[bt.size()-1]*pred_bt1, fdisk*0.0, fdisk);
+                        }
+
+                        // Skip improbable SEDs
+                        if (pdisk < nmz*pthr) continue;
 
                         // Integrate over bulge SED
                         for (uint_t ised_b : range(use)) {
@@ -441,8 +455,8 @@ namespace egg {
                             // Load stuff
                             const vec1d fbulge = mm*flux.safe(ibuv,ibvj,_);
 
-                            // Integrate over B/T
-                            for (uint_t ibt : range(bt)) {
+                            // Integrate over B/T (skipping B/T=0 and 1)
+                            for (uint_t ibt : range(1, bt.size()-1)) {
                                 const double btn = bt.safe[ibt];
                                 const double bti = 1.0 - btn;
 

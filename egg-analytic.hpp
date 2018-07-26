@@ -123,11 +123,13 @@ namespace egg {
         // Implementation parameters
         double logmass_min   = 4.0;
         double logmass_max   = 13.0;
-        uint_t logmass_steps = 100;
+        uint_t logmass_steps = 50;
 
         uint_t a_steps  = 50;
         uint_t b_steps  = 50;
-        uint_t bt_steps = 100;
+        uint_t bt_steps = 5;
+
+        uint_t seds_step = 1;
 
         // Resources
         std::string share_dir = "./";
@@ -164,6 +166,7 @@ namespace egg {
         vec1d a, b;
         vec1d uv, vj;
         vec1d bt;
+        uint_t seds_step = 1;
 
         // Base distributions
         static double gaussian_integrate(double x1, double x2, double mu, double sigma) {
@@ -237,6 +240,7 @@ namespace egg {
             area = opts.area*sqr(dpi/180.0)/(4*dpi); // fraction of the sky we simulate
 
             // Base arrays
+            seds_step = opts.seds_step;
             m  = rgen(opts.logmass_min, opts.logmass_max, opts.logmass_steps);
             dm = m[1] - m[0];
             nm = e10(m);
@@ -328,6 +332,12 @@ namespace egg {
             for (uint_t iuv : range(flux.dims[0]))
             for (uint_t ivj : range(flux.dims[1])) {
                 if (!use.safe(iuv, ivj)) continue;
+
+                // Skip SEDs (if asked)
+                if ((iuv+ivj) % seds_step != 0) {
+                    use.safe(iuv, ivj) = false;
+                    continue;
+                }
 
                 vec1d tlam = lam.safe(iuv, ivj, _);
                 vec1d tsed = sed.safe(iuv, ivj, _);

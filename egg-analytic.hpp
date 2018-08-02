@@ -235,13 +235,21 @@ namespace egg {
             fits::read_table(opts.share_dir+"opt_lib_fast_hd.fits",
                 ftable(use, lam, sed, buv, bvj));
 
+            // Skip SEDs (if asked)
+            seds_step = opts.seds_step;
+            for (uint_t iuv : range(flux.dims[0]))
+            for (uint_t ivj : range(flux.dims[1])) {
+                if ((iuv+ivj) % seds_step != 0) {
+                    use.safe(iuv, ivj) = false;
+                }
+            }
+
             // Internal parameters
             flim = e10(0.4*(23.9 - opts.maglim));
             cosmo = get_cosmo("std"); // must be specific cosmology for which EGG is calibrated
             area = opts.area*sqr(dpi/180.0)/(4*dpi); // fraction of the sky we simulate
 
             // Base arrays
-            seds_step = opts.seds_step;
             m  = rgen(opts.logmass_min, opts.logmass_max, opts.logmass_steps);
             dm = m[1] - m[0];
             nm = e10(m);
@@ -338,12 +346,6 @@ namespace egg {
             for (uint_t iuv : range(flux.dims[0]))
             for (uint_t ivj : range(flux.dims[1])) {
                 if (!use.safe(iuv, ivj)) continue;
-
-                // Skip SEDs (if asked)
-                if ((iuv+ivj) % seds_step != 0) {
-                    use.safe(iuv, ivj) = false;
-                    continue;
-                }
 
                 vec1d tlam = lam.safe(iuv, ivj, _);
                 vec1d tsed = sed.safe(iuv, ivj, _);

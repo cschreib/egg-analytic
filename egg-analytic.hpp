@@ -245,13 +245,12 @@ namespace egg {
 
             // Skip SEDs (if asked)
             seds_step = opts.seds_step;
-            for (uint_t iuv : range(flux.dims[0]))
-            for (uint_t ivj : range(flux.dims[1])) {
+            for (uint_t iuv : range(use.dims[0]))
+            for (uint_t ivj : range(use.dims[1])) {
                 if ((iuv+ivj) % seds_step != 0) {
                     use.safe(iuv, ivj) = false;
                 }
             }
-
 
             // Internal parameters
             flim = e10(0.4*(23.9 - opts.maglim));

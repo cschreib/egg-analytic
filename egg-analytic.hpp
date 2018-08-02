@@ -131,6 +131,8 @@ namespace egg {
 
         uint_t seds_step = 1;
 
+        bool naive_igm = false;
+
         // Resources
         std::string share_dir = "./";
         std::string filter_db = share_dir+"filter-db/db.dat";
@@ -160,6 +162,7 @@ namespace egg {
         filter_t selection_filter;
         vec1s bands;
         vec<1,filter_t> filters;
+        bool naive_igm = false;
 
         // Base arrays
         vec1d m, nm;
@@ -232,8 +235,13 @@ namespace egg {
                 "please provide the value for the magnitude limit in the options");
 
             // Read SED library
-            fits::read_table(opts.share_dir+"opt_lib_fast_hd.fits",
-                ftable(use, lam, sed, buv, bvj));
+            naive_igm = opts.naive_igm;
+            std::string sed_file = opts.share_dir+"opt_lib_fast_hd_noigm.fits";
+            if (naive_igm) {
+                sed_file = opts.share_dir+"opt_lib_fast_hd.fits";
+            }
+
+            fits::read_table(sed_file, ftable(use, lam, sed, buv, bvj));
 
             // Skip SEDs (if asked)
             seds_step = opts.seds_step;
@@ -243,6 +251,7 @@ namespace egg {
                     use.safe(iuv, ivj) = false;
                 }
             }
+
 
             // Internal parameters
             flim = e10(0.4*(23.9 - opts.maglim));
@@ -322,6 +331,45 @@ namespace egg {
         virtual void on_generated(uint_t im, uint_t it, uint_t ised_d, uint_t ised_b,
             uint_t ibt, double ngal, const vec1d& fdisk, const vec1d& fbulge) = 0;
 
+        void apply_madau_igm(double z, const vec1d& lam, vec1d& sed) {
+            // http://adsabs.harvard.edu/abs/1995ApJ...441...18M
+            // TODO: check this implementation someday, I suspect this is wrong or
+            // very approximate (taken directly from FAST)
+
+            double da; {
+                double l0 = 1050.0*(1.0 + z);
+                double l1 = 1170.0*(1.0 + z);
+                uint_t nstep = 100;
+                vec1d tl = rgen(l0, l1, nstep);
+                vec1d ptau = exp(-3.6e-3*pow(tl/1216.0, 3.46));
+                da = total(ptau)*(l1-l0)/nstep/(120.0*(1.0 + z));
+            }
+
+            double db; {
+                double l0 = 920.0*(1.0 + z);
+                double l1 = 1015.0*(1.0 + z);
+                uint_t nstep = 100;
+                vec1d tl = rgen(l0, l1, nstep);
+                vec1d ptau = exp(-1.7e-3*pow(tl/1026.0, 3.46) - 1.2e-3*pow(tl/972.5, 3.46) -
+                    9.3e-4*pow(tl/950.0, 3.46));
+                db = total(ptau)*(l1-l0)/nstep/(95.0*(1.0 + z));
+            }
+
+            uint_t l0 = lower_bound(lam, 0.0921);
+            uint_t l1 = lower_bound(lam, 0.1026);
+            uint_t l2 = lower_bound(lam, 0.1216);
+
+            for (uint_t l : range(l0)) {
+                sed.safe[l] = 0;
+            }
+            for (uint_t l : range(l0, l1)) {
+                sed.safe[l] *= db;
+            }
+            for (uint_t l : range(l1, l2)) {
+                sed.safe[l] *= da;
+            }
+        };
+
         void generate(double zf, double dz) {
             phypp_check(initialized, "please first call initialize() with your desired survey setup");
 
@@ -349,6 +397,10 @@ namespace egg {
 
                 vec1d tlam = lam.safe(iuv, ivj, _);
                 vec1d tsed = sed.safe(iuv, ivj, _);
+
+                if (!naive_igm) {
+                    apply_madau_igm(zf, tlam, tsed);
+                }
 
                 tsed = lsun2uJy(zf, df, tlam, tsed);
                 tlam *= (1.0 + zf);

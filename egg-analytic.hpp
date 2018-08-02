@@ -156,8 +156,9 @@ namespace egg {
         double flim = dnan;
         cosmo_t cosmo;
         double area = dnan;
+        std::string selection_band;
         filter_t selection_filter;
-        vec1s filter_names;
+        vec1s bands;
         vec<1,filter_t> filters;
 
         // Base arrays
@@ -257,20 +258,23 @@ namespace egg {
             auto filter_db = read_filter_db(opts.filter_db);
 
             // Find selection filter
-            phypp_check(get_filter(filter_db, opts.selection_band, selection_filter),
+            selection_band = opts.selection_band;
+            phypp_check(get_filter(filter_db, selection_band, selection_filter),
                 "could not find selection filter, aborting");
 
-            filter_names = opts.filters;
-            phypp_check(get_filters(filter_db, opts.filters, filters),
+            bands = opts.filters;
+            phypp_check(get_filters(filter_db, bands, filters),
                 "could not find some filters, aborting");
 
             // Truncate filters
             if (opts.trim_filters) {
                 vec1u idg = where(selection_filter.res/max(selection_filter.res) > 1e-3);
+                phypp_check(!idg.empty(), "filter '", opts.selection_band, "' has no usable data");
                 selection_filter.lam = selection_filter.lam[idg[0]-_-idg[-1]];
                 selection_filter.res = selection_filter.res[idg[0]-_-idg[-1]];
                 for (uint_t l : range(filters)) {
                     idg = where(filters[l].res/max(filters[l].res) > 1e-3);
+                    phypp_check(!idg.empty(), "filter '", opts.filters[l], "' has no usable data");
                     filters[l].lam = filters[l].lam[idg[0]-_-idg[-1]];
                     filters[l].res = filters[l].res[idg[0]-_-idg[-1]];
                 }

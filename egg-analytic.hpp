@@ -330,7 +330,7 @@ namespace egg {
         virtual void on_generated(uint_t im, uint_t it, uint_t ised_d, uint_t ised_b,
             uint_t ibt, double ngal, const vec1d& fdisk, const vec1d& fbulge) = 0;
 
-        void apply_madau_igm(double z, const vec1d& lam, vec1d& sed) {
+        void apply_madau_igm(double z, const vec1d& wl, vec1d& flx) {
             // http://adsabs.harvard.edu/abs/1995ApJ...441...18M
             // TODO: check this implementation someday, I suspect this is wrong or
             // very approximate (taken directly from FAST)
@@ -354,20 +354,20 @@ namespace egg {
                 db = total(ptau)*(l1-l0)/nstep/(95.0*(1.0 + z));
             }
 
-            uint_t l0 = lower_bound(lam, 0.0921);
-            uint_t l1 = lower_bound(lam, 0.1026);
-            uint_t l2 = lower_bound(lam, 0.1216);
+            uint_t l0 = lower_bound(wl, 0.0921);
+            uint_t l1 = lower_bound(wl, 0.1026);
+            uint_t l2 = lower_bound(wl, 0.1216);
 
             for (uint_t l : range(l0)) {
-                sed.safe[l] = 0;
+                flx.safe[l] = 0;
             }
             for (uint_t l : range(l0, l1)) {
-                sed.safe[l] *= db;
+                flx.safe[l] *= db;
             }
             for (uint_t l : range(l1, l2)) {
-                sed.safe[l] *= da;
+                flx.safe[l] *= da;
             }
-        };
+        }
 
         void generate(double zf, double dz) {
             phypp_check(initialized, "please first call initialize() with your desired survey setup");

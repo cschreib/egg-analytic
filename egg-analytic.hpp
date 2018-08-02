@@ -296,8 +296,10 @@ namespace egg {
 
             // Re-normalize filter
             selection_filter.res /= integrate(selection_filter.lam, selection_filter.res);
+            selection_filter.rlam = integrate(selection_filter.lam, selection_filter.lam*selection_filter.res);
             for (uint_t l : range(filters)) {
                 filters[l].res /= integrate(filters[l].lam, filters[l].res);
+                filters[l].rlam = integrate(filters[l].lam, filters[l].res*filters[l].lam);
             }
 
             initialized = true;

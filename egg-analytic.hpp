@@ -354,7 +354,7 @@ namespace egg {
                 db = total(ptau)*(l1-l0)/nstep/(95.0*(1.0 + z));
             }
 
-            uint_t l0 = lower_bound(wl, 0.0921);
+            uint_t l0 = lower_bound(wl, 0.0912);
             uint_t l1 = lower_bound(wl, 0.1026);
             uint_t l2 = lower_bound(wl, 0.1216);
 

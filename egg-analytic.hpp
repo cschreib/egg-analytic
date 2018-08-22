@@ -158,11 +158,16 @@ namespace egg {
         double flim = dnan;
         cosmo_t cosmo;
         double area = dnan;
+
+        filter_db_t filter_db;
         std::string selection_band;
         filter_t selection_filter;
         vec1s bands;
         vec<1,filter_t> filters;
         bool naive_igm = false;
+        bool filter_flambda = false;
+        bool filter_photons = false;
+        bool trim_filters = false;
 
         // Base arrays
         vec1d m, nm;
@@ -228,6 +233,38 @@ namespace egg {
         generator() = default;
         virtual ~generator() = default;
 
+        bool read_filter(const std::string& band, filter_t& fil) const {
+            if (!get_filter(filter_db, band, fil)) {
+                return false;
+            }
+
+            // Truncate
+            if (trim_filters) {
+                vec1u idg = where(fil.res/max(fil.res) > 1e-3);
+                phypp_check(!idg.empty(), "filter '", band, "' has no usable data");
+                fil.lam = fil.lam[idg[0]-_-idg[-1]];
+                fil.res = fil.res[idg[0]-_-idg[-1]];
+            }
+
+            // Apply filter definition
+            if (filter_flambda) {
+                // Filter is defined such that it must integrate f_lambda and not f_nu
+                // f_lambda*r(lambda) ~ f_nu*[r(lambda)/lambda^2]
+                fil.res /= sqr(fil.lam);
+            }
+            if (filter_photons) {
+                // Filter is defined such that it integrates photons and not energy
+                // n(lambda)*r(lambda) ~ f(lambda)*[r(lambda)*lambda]
+                fil.res *= fil.lam;
+            }
+
+            // Re-normalize filter
+            fil.res /= integrate(fil.lam, fil.res);
+            fil.rlam = integrate(fil.lam, fil.lam*fil.res);
+
+            return true;
+        }
+
         void initialize(const generator_options& opts) {
             phypp_check(!opts.selection_band.empty(),
                 "please provide the name of the selection band in the options");
@@ -271,55 +308,22 @@ namespace egg {
             bt = rgen(0.0, 1.0, opts.bt_steps);
 
             // Read filter library
-            auto filter_db = read_filter_db(opts.filter_db);
+            filter_db = read_filter_db(opts.filter_db);
+            filter_flambda = opts.filter_flambda;
+            filter_photons = opts.filter_photons;
+            trim_filters = opts.trim_filters;
 
             // Find selection filter
             selection_band = opts.selection_band;
-            phypp_check(get_filter(filter_db, selection_band, selection_filter),
+            phypp_check(read_filter(selection_band, selection_filter),
                 "could not find selection filter, aborting");
 
+            // Find flux filters
             bands = opts.filters;
-            phypp_check(get_filters(filter_db, bands, filters),
-                "could not find some filters, aborting");
-
-            // Truncate filters
-            if (opts.trim_filters) {
-                vec1u idg = where(selection_filter.res/max(selection_filter.res) > 1e-3);
-                phypp_check(!idg.empty(), "filter '", opts.selection_band, "' has no usable data");
-                selection_filter.lam = selection_filter.lam[idg[0]-_-idg[-1]];
-                selection_filter.res = selection_filter.res[idg[0]-_-idg[-1]];
-                for (uint_t l : range(filters)) {
-                    idg = where(filters[l].res/max(filters[l].res) > 1e-3);
-                    phypp_check(!idg.empty(), "filter '", opts.filters[l], "' has no usable data");
-                    filters[l].lam = filters[l].lam[idg[0]-_-idg[-1]];
-                    filters[l].res = filters[l].res[idg[0]-_-idg[-1]];
-                }
-            }
-
-            // Apply filter definition
-            if (opts.filter_flambda) {
-                // Filter is defined such that it must integrate f_lambda and not f_nu
-                // f_lambda*r(lambda) ~ f_nu*[r(lambda)/lambda^2]
-                selection_filter.res /= sqr(selection_filter.lam);
-                for (uint_t l : range(filters)) {
-                    filters[l].res /= sqr(filters[l].lam);
-                }
-            }
-            if (opts.filter_photons) {
-                // Filter is defined such that it integrates photons and not energy
-                // n(lambda)*r(lambda) ~ f(lambda)*[r(lambda)*lambda]
-                selection_filter.res *= selection_filter.lam;
-                for (uint_t l : range(filters)) {
-                    filters[l].res *= filters[l].lam;
-                }
-            }
-
-            // Re-normalize filter
-            selection_filter.res /= integrate(selection_filter.lam, selection_filter.res);
-            selection_filter.rlam = integrate(selection_filter.lam, selection_filter.lam*selection_filter.res);
-            for (uint_t l : range(filters)) {
-                filters[l].res /= integrate(filters[l].lam, filters[l].res);
-                filters[l].rlam = integrate(filters[l].lam, filters[l].res*filters[l].lam);
+            filters.resize(bands.size());
+            for (uint_t l : range(bands)) {
+                phypp_check(read_filter(bands[l], filters[l]),
+                    "could not find filter '", bands[l], "', aborting");
             }
 
             initialized = true;
@@ -390,12 +394,12 @@ namespace egg {
 
             // Pre-compute fluxes in selection band in library
             flux.resize(use.dims, filters.size()+1);
-            for (uint_t iuv : range(flux.dims[0]))
-            for (uint_t ivj : range(flux.dims[1])) {
-                if (!use.safe(iuv, ivj)) continue;
+            for (uint_t iuv : range(use.dims[0]))
+            for (uint_t ivj : range(use.dims[1])) {
+                if (!use.safe(iuv,ivj)) continue;
 
-                vec1d tlam = lam.safe(iuv, ivj, _);
-                vec1d tsed = sed.safe(iuv, ivj, _);
+                vec1d tlam = lam.safe(iuv,ivj,_);
+                vec1d tsed = sed.safe(iuv,ivj,_);
 
                 if (!naive_igm) {
                     apply_madau_igm(zf, tlam, tsed);
@@ -404,12 +408,12 @@ namespace egg {
                 tsed = lsun2uJy(zf, df, tlam, tsed);
                 tlam *= (1.0 + zf);
 
-                flux.safe(iuv, ivj, 0) = ML_cor*sed2flux(
+                flux.safe(iuv,ivj,0) = ML_cor*sed2flux(
                     selection_filter.lam, selection_filter.res, tlam, tsed
                 );
 
                 for (uint_t l : range(filters)) {
-                    flux.safe(iuv, ivj, l+1) = ML_cor*sed2flux(
+                    flux.safe(iuv,ivj,l+1) = ML_cor*sed2flux(
                         filters[l].lam, filters[l].res, tlam, tsed
                     );
                 }

@@ -122,7 +122,7 @@ namespace egg {
 
         // Implementation parameters
         double logmass_min   = 4.0;
-        double logmass_max   = 13.0;
+        double logmass_max   = 12.0;
         uint_t logmass_steps = 50;
 
         uint_t a_steps  = 50;

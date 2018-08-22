@@ -1,5 +1,158 @@
 #include <phypp.hpp>
 
+namespace phypp {
+namespace thread {
+    template<typename W, typename T>
+    struct worker_with_workspace {
+        lock_free_queue<T> input;
+        W                  wsp;
+        std::atomic<bool>  shutdown;
+        std::thread        impl;
+
+        template<typename F, typename ... Args>
+        explicit worker_with_workspace(const F& f, const Args&... args) : wsp(args...),
+            shutdown(false), impl([this,f]() {
+
+            T t;
+            while (!shutdown) {
+                while (input.pop(t)) {
+                    f(wsp, t);
+                }
+            }
+        }) {}
+
+        ~worker_with_workspace() {
+            join();
+        }
+
+        void join() {
+            if (impl.joinable()) {
+                impl.join();
+            }
+        }
+
+        uint_t workload() const {
+            return input.size();
+        }
+    };
+
+    template<typename T>
+    struct worker_no_workspace {
+        lock_free_queue<T> input;
+        std::atomic<bool>  shutdown;
+        std::thread        impl;
+
+        template<typename F>
+        explicit worker_no_workspace(const F& f) : shutdown(false),
+            impl([this,f]() {
+
+            T t;
+            while (!shutdown) {
+                while (input.pop(t)) {
+                    f(t);
+                }
+            }
+        }) {}
+
+        ~worker_no_workspace() {
+            join();
+        }
+
+        void join() {
+            if (impl.joinable()) {
+                impl.join();
+            }
+        }
+
+        uint_t workload() const {
+            return input.size();
+        }
+    };
+
+    template<typename T, typename W = void>
+    struct worker_pool {
+        using worker = typename std::conditional<std::is_same<W, void>::value,
+            worker_no_workspace<T>, worker_with_workspace<W,T>>::type;
+
+        std::vector<std::unique_ptr<worker>> workers;
+        uint_t last_push = 0;
+
+        worker_pool() = default;
+
+        template<typename F, typename ... Args>
+        explicit worker_pool(uint_t nthread, const F& f, const Args&... args) {
+            start(nthread, f, args...);
+        }
+
+        ~worker_pool() {
+            join();
+        }
+
+        template<typename F, typename ... Args>
+        void start(uint_t nthread, const F& f, const Args&... args) {
+            workers.clear();
+            workers.reserve(nthread);
+            for (uint_t i = 0; i < nthread; ++i) {
+                workers.emplace_back(new worker(f, args...));
+            }
+
+            last_push = workers.size()-1;
+        }
+
+        void join() {
+            for (uint_t i : range(workers)) {
+                workers[i]->shutdown = true;
+            }
+
+            for (uint_t i : range(workers)) {
+                workers[i]->join();
+            }
+        }
+
+        void process(T t) {
+            ++last_push;
+            if (last_push >= workers.size()) {
+                last_push = 0;
+            }
+
+            workers[last_push]->input.push(std::move(t));
+        }
+
+        void process(uint_t i, T t) {
+            workers[i]->input.push(std::move(t));
+        }
+
+        void consume_all() {
+            bool finished = false;
+            while (!finished) {
+                finished = true;
+                for (uint_t i : range(workers)) {
+                    if (workers[i]->workload() > 0) {
+                        finished = false;
+                        break;
+                    }
+                }
+
+                sleep_for(1e-6);
+            }
+        }
+
+        uint_t size() const {
+            return workers.size();
+        }
+
+        uint_t remaining() const {
+            uint_t nleft = 0;
+            for (uint_t i : range(workers)) {
+                nleft += workers[i]->workload();
+            }
+
+            return nleft;
+        }
+    };
+}
+}
+
 namespace egg {
     namespace impl {
         struct csmf {
@@ -139,6 +292,10 @@ namespace egg {
         bool filter_flambda = false;
         bool filter_photons = false;
         bool trim_filters = false;
+
+        // Execution policy
+        uint_t nthread = 0;
+        uint_t max_queued_models = npos;
     };
 
     class generator {
@@ -159,6 +316,7 @@ namespace egg {
         cosmo_t cosmo;
         double area = dnan;
 
+        // Config
         filter_db_t filter_db;
         std::string selection_band;
         filter_t selection_filter;
@@ -168,6 +326,8 @@ namespace egg {
         bool filter_flambda = false;
         bool filter_photons = false;
         bool trim_filters = false;
+        uint_t nthread = 0;
+        uint_t max_queued_models = npos;
 
         // Base arrays
         vec1d m, nm;
@@ -326,12 +486,20 @@ namespace egg {
                     "could not find filter '", bands[l], "', aborting");
             }
 
+            // Other parameters
+            nthread = opts.nthread;
+            max_queued_models = opts.max_queued_models;
+            if (max_queued_models == npos) {
+                // Automatic: keep at most two queued models per thread
+                max_queued_models = 2*nthread;
+            }
+
             initialized = true;
         }
 
         virtual void on_disk_sed_changed(uint_t ised_d) {}
         virtual void on_bulge_sed_changed(uint_t ised_b) {}
-        virtual void on_generated(uint_t im, uint_t it, uint_t ised_d, uint_t ised_b,
+        virtual void on_generated(uint_t iter, uint_t im, uint_t it, uint_t ised_d, uint_t ised_b,
             uint_t ibt, double ngal, const vec1d& fdisk, const vec1d& fbulge) = 0;
 
         void apply_madau_igm(double z, const vec1d& wl, vec1d& flx) {
@@ -373,6 +541,12 @@ namespace egg {
             }
         }
 
+        struct generated_data {
+            uint_t iter, im, it, ised_d, ised_b, ibt;
+            double ngal;
+            vec1d fdisk, fbulge;
+        };
+
         void generate(double zf, double dz) {
             phypp_check(initialized, "please first call initialize() with your desired survey setup");
 
@@ -393,10 +567,15 @@ namespace egg {
             double df = lumdist(zf, cosmo);
 
             // Pre-compute fluxes in selection band in library
+            uint_t first_sed = npos;
             flux.resize(use.dims, filters.size()+1);
             for (uint_t iuv : range(use.dims[0]))
             for (uint_t ivj : range(use.dims[1])) {
                 if (!use.safe(iuv,ivj)) continue;
+
+                if (first_sed == npos) {
+                    first_sed = iuv*use.dims[1] + ivj;
+                }
 
                 vec1d tlam = lam.safe(iuv,ivj,_);
                 vec1d tsed = sed.safe(iuv,ivj,_);
@@ -425,6 +604,41 @@ namespace egg {
             // Find minimum mass we need to bother with
             const double mmin = log10(min(flim/flux(_,_,0)));
             const uint_t m0 = lower_bound(m, mmin);
+
+            thread::worker_pool<generated_data> pool;
+            if (nthread > 0) {
+                // Start fitting threads
+                pool.start(nthread, [this](const generated_data& d) {
+                    on_generated(
+                        d.iter, d.im, d.it, d.ised_d, d.ised_b, d.ibt, d.ngal, d.fdisk, d.fbulge
+                    );
+                });
+            }
+
+            uint_t iter = 0;
+
+            // Processing function (dispatch to direct processing or thread pool)
+            auto process = [&](uint_t tim, uint_t tit, uint_t tised_d, uint_t tised_b,
+                uint_t tibt, double tngal, const vec1d& tfdisk, const vec1d& tfbulge) {
+
+                if (nthread == 0) {
+                    // No multi-threading, handle now
+                    on_generated(iter, tim, tit, tised_d, tised_b, tibt, tngal, tfdisk, tfbulge);
+                } else {
+                    // Multi-threading.
+                    // First make sure we don't have too many queued calculations,
+                    // and if so wait for a moment until previous calculations have finished.
+                    while (max_queued_models > 0 && pool.remaining() > max_queued_models) {
+                        thread::sleep_for(1e-6);
+                    }
+
+                    // Now send the model to the thread pool
+                    pool.process(generated_data{iter, tim, tit, tised_d, tised_b,
+                        tibt, tngal, tfdisk, tfbulge});
+                }
+
+                ++iter;
+            };
 
             // Integrate over stellar masses
             for (uint_t im : range(m0, m.size())) {
@@ -483,7 +697,9 @@ namespace egg {
                         const uint_t idvj = ised_d % use.dims[1];
 
                         // Notify disk SED has changed
-                        on_disk_sed_changed(ised_d);
+                        if (nthread == 0) {
+                            on_disk_sed_changed(ised_d);
+                        }
 
                         // pdisk(d | z,M*) * N(M*,t,z)
                         const double pdisk = nmz*pblue.safe(iduv, idvj);
@@ -494,15 +710,19 @@ namespace egg {
 
                         // Optimization: send B/T=0 now, don't need to iterate over SED bulge
                         if (pdisk >= nmz*pthr) {
-                            on_generated(im, it, ised_d, use.safe[0],
+                            process(im, it, ised_d, first_sed,
                                 0, pbt.safe[0]*pdisk, fdisk, fdisk*0.0);
                         }
+
                         // Optimization: send B/T=1 now, don't need to iterate over SED disk
                         // (trick: pretend we're actually iterating over SED bulge now)
                         if (pred_bt1 >= nmz*pthr) {
-                            on_bulge_sed_changed(ised_d);
-                            on_generated(im, it, use.safe[0], ised_d,
-                                bt.size()-1, pbt.safe[bt.size()-1]*pred_bt1, fdisk*0.0, fdisk);
+                            if (nthread == 0) {
+                                on_bulge_sed_changed(ised_d);
+                            }
+
+                            process(im, it, first_sed, ised_d,
+                                    bt.size()-1, pbt.safe[bt.size()-1]*pred_bt1, fdisk*0.0, fdisk);
                         }
 
                         // Skip improbable SEDs
@@ -516,7 +736,9 @@ namespace egg {
                             const uint_t ibvj = ised_b % use.dims[1];
 
                             // Notify bulge SED has changed
-                            on_bulge_sed_changed(ised_b);
+                            if (nthread == 0) {
+                                on_bulge_sed_changed(ised_b);
+                            }
 
                             // p(blue) * pdisk(d | z,M*) * N(M*,t,z)
                             const double pb = pdisk*pblue.safe(ibuv,ibvj);
@@ -528,7 +750,7 @@ namespace egg {
                             // Load stuff
                             const vec1d fbulge = mm*flux.safe(ibuv,ibvj,_);
 
-                            // Integrate over B/T (skipping B/T=0 and 1)
+                            // Integrate over B/T (skipping B/T=0 and 1, already done above)
                             for (uint_t ibt : range(1, bt.size()-1)) {
                                 const double btn = bt.safe[ibt];
                                 const double bti = 1.0 - btn;
@@ -540,8 +762,7 @@ namespace egg {
                                 const double tprob = pbulge*pbt.safe[ibt];
 
                                 // And forward to derived class.
-                                on_generated(im, it, ised_d, ised_b,
-                                    ibt, tprob, fdisk*bti, fbulge*btn);
+                                process(im, it, ised_d, ised_b, ibt, tprob, fdisk*bti, fbulge*btn);
                             }
                         }
                     }

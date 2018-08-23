@@ -296,6 +296,7 @@ namespace egg {
         // Execution policy
         uint_t nthread = 0;
         uint_t max_queued_models = npos;
+        bool strict_maglim = true;
     };
 
     class generator {
@@ -328,6 +329,7 @@ namespace egg {
         bool trim_filters = false;
         uint_t nthread = 0;
         uint_t max_queued_models = npos;
+        bool strict_maglim = true;
 
         // Base arrays
         vec1d m, nm;
@@ -494,6 +496,8 @@ namespace egg {
                 max_queued_models = 2*nthread;
             }
 
+            strict_maglim = opts.strict_maglim;
+
             initialized = true;
         }
 
@@ -621,6 +625,11 @@ namespace egg {
             auto process = [&](uint_t tim, uint_t tit, uint_t tised_d, uint_t tised_b,
                 uint_t tibt, double tngal, const vec1d& tfdisk, const vec1d& tfbulge) {
 
+                if (strict_maglim && tfdisk.safe[0] + tfbulge.safe[0] < flim) {
+                    // Do not send galaxies below the magnitude limit
+                    return;
+                }
+
                 if (nthread == 0) {
                     // No multi-threading, handle now
                     on_generated(iter, tim, tit, tised_d, tised_b, tibt, tngal, tfdisk, tfbulge);
@@ -722,7 +731,7 @@ namespace egg {
                             }
 
                             process(im, it, first_sed, ised_d,
-                                    bt.size()-1, pbt.safe[bt.size()-1]*pred_bt1, fdisk*0.0, fdisk);
+                                bt.size()-1, pbt.safe[bt.size()-1]*pred_bt1, fdisk*0.0, fdisk);
                         }
 
                         // Skip improbable SEDs

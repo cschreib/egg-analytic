@@ -289,6 +289,9 @@ namespace egg {
         // Resources
         std::string share_dir = "./";
         std::string filter_db = share_dir+"filter-db/db.dat";
+        std::string sed_lib;
+        std::string sed_lib_imf = "salpeter";
+        bool single_sed_library = false;
         bool filter_flambda = false;
         bool filter_photons = false;
         bool trim_filters = false;
@@ -303,11 +306,17 @@ namespace egg {
     public :
         bool initialized = false;
 
-        // SED library
+        // EGG SED library
         vec2b use;
         vec3f sed, lam;
         vec2f bvj, buv;
         vec3d flux;
+
+        // Single SED library
+        vec2f single_sed, single_lam;
+        vec1b single_use;
+        vec1u single_type;
+        vec2d single_flux;
 
         // Mass function
         impl::csmf cs_mf;
@@ -330,6 +339,7 @@ namespace egg {
         uint_t nthread = 0;
         uint_t max_queued_models = npos;
         bool strict_maglim = true;
+        bool single_sed_library = false;
 
         // Base arrays
         vec1d m, nm;
@@ -435,19 +445,55 @@ namespace egg {
 
             // Read SED library
             naive_igm = opts.naive_igm;
-            std::string sed_file = opts.share_dir+"opt_lib_fast_hd_noigm.fits";
-            if (naive_igm) {
-                sed_file = opts.share_dir+"opt_lib_fast_hd.fits";
+            std::string sed_file;
+            if (opts.sed_lib.empty()) {
+                sed_file = opts.share_dir+"opt_lib_fast_hd_noigm.fits";
+                if (naive_igm) {
+                    sed_file = opts.share_dir+"opt_lib_fast_hd.fits";
+                }
+            } else {
+                sed_file = opts.sed_lib;
             }
 
-            fits::read_table(sed_file, ftable(use, lam, sed, buv, bvj));
+            if (opts.single_sed_library) {
+                fits::read_table(sed_file, "use", single_use, "lam", single_lam,
+                    "sed", single_sed, "type", single_type);
+            } else {
+                fits::read_table(sed_file, ftable(use, lam, sed, buv, bvj));
+            }
+
+            // The SEDs in the library are given in Lsun/Msun.
+            // Therefore they assume an IMF. We need to correct for this
+            // if this assumed IMF is different from the one used to
+            // build the stellar mass functions (i.e., Salpeter).
+            // Here we assume this is a simple global rescaling factor.
+            double conv = 1.0;
+            if (opts.sed_lib_imf == "salpeter") {
+                conv = 1.0; // OK, EGG assumes Salpeter throughout
+            } else if (opts.sed_lib_imf == "chabrier") {
+                conv = e10(-0.2);
+            }
+
+            if (opts.single_sed_library) {
+                single_sed *= conv;
+            } else {
+                sed *= conv;
+            }
 
             // Skip SEDs (if asked)
             seds_step = opts.seds_step;
-            for (uint_t iuv : range(use.dims[0]))
-            for (uint_t ivj : range(use.dims[1])) {
-                if ((iuv+ivj) % seds_step != 0) {
-                    use.safe(iuv, ivj) = false;
+            if (opts.single_sed_library) {
+                for (uint_t iuv : range(use.dims[0]))
+                for (uint_t ivj : range(use.dims[1])) {
+                    if ((iuv+ivj) % seds_step != 0) {
+                        use.safe(iuv, ivj) = false;
+                    }
+                }
+            } else {
+                for (uint_t ised : range(single_use)) {
+                    if (ised % seds_step != 0) {
+                        single_use.safe[ised] = false;
+                    }
                 }
             }
 
@@ -497,6 +543,7 @@ namespace egg {
             }
 
             strict_maglim = opts.strict_maglim;
+            single_sed_library = opts.single_sed_library;
 
             initialized = true;
         }
@@ -572,41 +619,82 @@ namespace egg {
 
             // Pre-compute fluxes in selection band in library
             uint_t first_sed = npos;
-            flux.resize(use.dims, filters.size()+1);
-            for (uint_t iuv : range(use.dims[0]))
-            for (uint_t ivj : range(use.dims[1])) {
-                if (!use.safe(iuv,ivj)) continue;
+            double fmax = 0.0;
+            if (single_sed_library) {
+                single_flux.resize(single_use.dims, filters.size()+1);
+                for (uint_t ised : range(single_use)) {
+                    if (!single_use.safe[ised]) continue;
 
-                if (first_sed == npos) {
-                    first_sed = iuv*use.dims[1] + ivj;
-                }
+                    if (first_sed == npos) {
+                        first_sed = ised;
+                    }
 
-                vec1d tlam = lam.safe(iuv,ivj,_);
-                vec1d tsed = sed.safe(iuv,ivj,_);
+                    vec1d tlam = single_lam.safe(ised,_);
+                    vec1d tsed = single_sed.safe(ised,_);
 
-                if (!naive_igm) {
-                    apply_madau_igm(zf, tlam, tsed);
-                }
+                    if (!naive_igm) {
+                        apply_madau_igm(zf, tlam, tsed);
+                    }
 
-                tsed = lsun2uJy(zf, df, tlam, tsed);
-                tlam *= (1.0 + zf);
+                    tsed = lsun2uJy(zf, df, tlam, tsed);
+                    tlam *= (1.0 + zf);
 
-                flux.safe(iuv,ivj,0) = ML_cor*sed2flux(
-                    selection_filter.lam, selection_filter.res, tlam, tsed
-                );
-
-                for (uint_t l : range(filters)) {
-                    flux.safe(iuv,ivj,l+1) = ML_cor*sed2flux(
-                        filters[l].lam, filters[l].res, tlam, tsed
+                    single_flux.safe(ised,0) = ML_cor*sed2flux(
+                        selection_filter.lam, selection_filter.res, tlam, tsed
                     );
+
+                    if (single_flux.safe(ised,0) > fmax) {
+                        fmax = single_flux.safe(ised,0);
+                    }
+
+                    for (uint_t l : range(filters)) {
+                        single_flux.safe(ised,l+1) = ML_cor*sed2flux(
+                            filters[l].lam, filters[l].res, tlam, tsed
+                        );
+                    }
+                }
+            } else {
+                flux.resize(use.dims, filters.size()+1);
+                for (uint_t iuv : range(use.dims[0]))
+                for (uint_t ivj : range(use.dims[1])) {
+                    if (!use.safe(iuv,ivj)) continue;
+
+                    if (first_sed == npos) {
+                        first_sed = iuv*use.dims[1] + ivj;
+                    }
+
+                    vec1d tlam = lam.safe(iuv,ivj,_);
+                    vec1d tsed = sed.safe(iuv,ivj,_);
+
+                    if (!naive_igm) {
+                        apply_madau_igm(zf, tlam, tsed);
+                    }
+
+                    tsed = lsun2uJy(zf, df, tlam, tsed);
+                    tlam *= (1.0 + zf);
+
+                    flux.safe(iuv,ivj,0) = ML_cor*sed2flux(
+                        selection_filter.lam, selection_filter.res, tlam, tsed
+                    );
+
+                    if (flux.safe(iuv,ivj,0) > fmax) {
+                        fmax = flux.safe(iuv,ivj,0);
+                    }
+
+                    for (uint_t l : range(filters)) {
+                        flux.safe(iuv,ivj,l+1) = ML_cor*sed2flux(
+                            filters[l].lam, filters[l].res, tlam, tsed
+                        );
+                    }
                 }
             }
 
             // Select probability threshold below which SEDs are ignored
-            const double pthr = 0.1/count(use);
+            const uint_t nsed = count(use);
+            const double pthr = 0.1/nsed;
 
             // Find minimum mass we need to bother with
-            const double mmin = log10(min(flim/flux(_,_,0)));
+            const double mmin = log10(flim/fmax);
             const uint_t m0 = lower_bound(m, mmin);
 
             thread::worker_pool<generated_data> pool;
@@ -653,125 +741,154 @@ namespace egg {
             for (uint_t im : range(m0, m.size())) {
                 const double mm = nm.safe[im];
 
-                // pblue
-                vec2d pblue(use.dims); {
-                    vec1d pa = gaussian(a, abar.safe[im], asig.safe[im]);
-                    for (uint_t ia : range(a)) {
-                        vec1d puv = gaussian(uv, 2*col_cor + 0.45 + 0.545*a.safe[ia], 0.12);
-                        vec1d pvj = gaussian(vj,   col_cor +        0.838*a.safe[ia], 0.12);
-                        for (uint_t iuv : range(uv))
-                        for (uint_t ivj : range(vj)) {
-                            pblue.safe(iuv,ivj) += puv.safe[iuv]*pvj.safe[ivj]*pa.safe[ia];
-                        }
-                    }
+                if (single_sed_library) {
+                    // Simpler approach where we only generate fluxes from the SED library
+                    // as it is, not trying to add bulge and disk components
 
-                    pblue[where(!use)] = 0;
-                    pblue /= total(pblue);
-                }
+                    // Integrate over galaxy type (SF=1 or QU=0)
+                    for (uint_t it : {0, 1}) {
+                        // Probability
+                        const double nmz = dz*dm*dvdz*(it == 0 ?
+                            cs_mf.evaluate_qu(m.safe[im], zf) : cs_mf.evaluate_sf(m.safe[im], zf));
 
-                // pred
-                vec2d pred(use.dims); {
-                    vec1d pb = gaussian(b, bbar.safe[im], 0.1);
-                    pb.safe[0]           += lower_gaussian(-0.1, bbar.safe[im], 0.10);
-                    pb.safe[pb.size()-1] += upper_gaussian( 0.2, bbar.safe[im], 0.10);
-                    for (uint_t ib : range(b)) {
-                        vec1d puv = gaussian(uv, 2*col_cor + 1.85 + 0.88*b.safe[ib], 0.10);
-                        vec1d pvj = gaussian(vj,   col_cor + 1.25 +      b.safe[ib], 0.10);
-                        for (uint_t iuv : range(uv))
-                        for (uint_t ivj : range(vj)) {
-                            pred.safe(iuv,ivj) += puv.safe[iuv]*pvj.safe[ivj]*pb.safe[ib];
-                        }
-                    }
+                        for (uint_t ised : range(single_use)) {
+                            if (!use.safe[ised] || single_type.safe[ised] != it) continue;
 
-                    pred[where(!use)] = 0;
-                    pred /= total(pred);
-                }
-
-                // Integrate over galaxy type (SF or QU)
-                for (uint_t it : {0, 1}) {
-                    // N(M*,t,z)
-                    const double nmz = dz*dm*dvdz*(it == 0 ?
-                        cs_mf.evaluate_qu(m.safe[im], zf) : cs_mf.evaluate_sf(m.safe[im], zf));
-
-                    // p(B/T | M*,t)
-                    const double btbar = (it == 0 ? 0.5*pow(mm/1e10, 0.10) : 0.2*pow(mm/1e10, 0.27));
-                    vec1d pbt = lognormal(bt, btbar, 0.2);
-                    pbt.safe[bt.size()-1] += upper_lognormal(1.0, btbar, 0.2);
-
-                    // Integrate over disk SED
-                    for (uint_t ised_d : range(use)) {
-                        if (!use.safe[ised_d]) continue;
-
-                        const uint_t iduv = ised_d / use.dims[1];
-                        const uint_t idvj = ised_d % use.dims[1];
-
-                        // Notify disk SED has changed
-                        if (nthread == 0) {
-                            on_disk_sed_changed(ised_d);
-                        }
-
-                        // pdisk(d | z,M*) * N(M*,t,z)
-                        const double pdisk = nmz*pblue.safe(iduv, idvj);
-                        const double pred_bt1 = nmz*pred.safe(iduv, idvj);
-
-                        // Load stuff
-                        const vec1d fdisk = mm*flux.safe(iduv,idvj,_);
-
-                        // Optimization: send B/T=0 now, don't need to iterate over SED bulge
-                        if (pdisk >= nmz*pthr) {
-                            process(im, it, ised_d, first_sed,
-                                0, pbt.safe[0]*pdisk, fdisk, fdisk*0.0);
-                        }
-
-                        // Optimization: send B/T=1 now, don't need to iterate over SED disk
-                        // (trick: pretend we're actually iterating over SED bulge now)
-                        if (pred_bt1 >= nmz*pthr) {
+                            // Notify disk SED has changed
                             if (nthread == 0) {
-                                on_bulge_sed_changed(ised_d);
+                                on_disk_sed_changed(ised);
                             }
 
-                            process(im, it, first_sed, ised_d,
-                                bt.size()-1, pbt.safe[bt.size()-1]*pred_bt1, fdisk*0.0, fdisk);
+                            // Load flux
+                            const vec1d fdisk = mm*single_flux.safe(ised,_);
+
+                            // Forward to derived class
+                            process(im, it, ised, first_sed, 0, nmz/nsed, fdisk, fdisk*0.0);
+                        }
+                    }
+                } else {
+                    // EGG approach
+
+                    // pblue
+                    vec2d pblue(use.dims); {
+                        vec1d pa = gaussian(a, abar.safe[im], asig.safe[im]);
+                        for (uint_t ia : range(a)) {
+                            vec1d puv = gaussian(uv, 2*col_cor + 0.45 + 0.545*a.safe[ia], 0.12);
+                            vec1d pvj = gaussian(vj,   col_cor +        0.838*a.safe[ia], 0.12);
+                            for (uint_t iuv : range(uv))
+                            for (uint_t ivj : range(vj)) {
+                                pblue.safe(iuv,ivj) += puv.safe[iuv]*pvj.safe[ivj]*pa.safe[ia];
+                            }
                         }
 
-                        // Skip improbable SEDs
-                        if (pdisk < nmz*pthr) continue;
+                        pblue[where(!use)] = 0;
+                        pblue /= total(pblue);
+                    }
 
-                        // Integrate over bulge SED
-                        for (uint_t ised_b : range(use)) {
-                            if (!use.safe[ised_b]) continue;
+                    // pred
+                    vec2d pred(use.dims); {
+                        vec1d pb = gaussian(b, bbar.safe[im], 0.1);
+                        pb.safe[0]           += lower_gaussian(-0.1, bbar.safe[im], 0.10);
+                        pb.safe[pb.size()-1] += upper_gaussian( 0.2, bbar.safe[im], 0.10);
+                        for (uint_t ib : range(b)) {
+                            vec1d puv = gaussian(uv, 2*col_cor + 1.85 + 0.88*b.safe[ib], 0.10);
+                            vec1d pvj = gaussian(vj,   col_cor + 1.25 +      b.safe[ib], 0.10);
+                            for (uint_t iuv : range(uv))
+                            for (uint_t ivj : range(vj)) {
+                                pred.safe(iuv,ivj) += puv.safe[iuv]*pvj.safe[ivj]*pb.safe[ib];
+                            }
+                        }
 
-                            const uint_t ibuv = ised_b / use.dims[1];
-                            const uint_t ibvj = ised_b % use.dims[1];
+                        pred[where(!use)] = 0;
+                        pred /= total(pred);
+                    }
 
-                            // Notify bulge SED has changed
+                    // Integrate over galaxy type (SF or QU)
+                    for (uint_t it : {0, 1}) {
+                        // N(M*,t,z)
+                        const double nmz = dz*dm*dvdz*(it == 0 ?
+                            cs_mf.evaluate_qu(m.safe[im], zf) : cs_mf.evaluate_sf(m.safe[im], zf));
+
+                        // p(B/T | M*,t)
+                        const double btbar = (it == 0 ? 0.5*pow(mm/1e10, 0.10) : 0.2*pow(mm/1e10, 0.27));
+                        vec1d pbt = lognormal(bt, btbar, 0.2);
+                        pbt.safe[bt.size()-1] += upper_lognormal(1.0, btbar, 0.2);
+
+                        // Integrate over disk SED
+                        for (uint_t ised_d : range(use)) {
+                            if (!use.safe[ised_d]) continue;
+
+                            const uint_t iduv = ised_d / use.dims[1];
+                            const uint_t idvj = ised_d % use.dims[1];
+
+                            // Notify disk SED has changed
                             if (nthread == 0) {
-                                on_bulge_sed_changed(ised_b);
+                                on_disk_sed_changed(ised_d);
                             }
 
-                            // p(blue) * pdisk(d | z,M*) * N(M*,t,z)
-                            const double pb = pdisk*pblue.safe(ibuv,ibvj);
-                            const double pr = pdisk*pred.safe(ibuv,ibvj);
-
-                            // Skip improbable SEDs
-                            if (pb < pdisk*pthr && pr < pdisk*pthr) continue;
+                            // pdisk(d | z,M*) * N(M*,t,z)
+                            const double pdisk = nmz*pblue.safe(iduv, idvj);
+                            const double pred_bt1 = nmz*pred.safe(iduv, idvj);
 
                             // Load stuff
-                            const vec1d fbulge = mm*flux.safe(ibuv,ibvj,_);
+                            const vec1d fdisk = mm*flux.safe(iduv,idvj,_);
 
-                            // Integrate over B/T (skipping B/T=0 and 1, already done above)
-                            for (uint_t ibt : range(1, bt.size()-1)) {
-                                const double btn = bt.safe[ibt];
-                                const double bti = 1.0 - btn;
+                            // Optimization: send B/T=0 now, don't need to iterate over SED bulge
+                            if (pdisk >= nmz*pthr) {
+                                process(im, it, ised_d, first_sed,
+                                    0, pbt.safe[0]*pdisk, fdisk, fdisk*0.0);
+                            }
 
-                                // pbulge(b | z,M*,B/T)
-                                const double pbulge = (btn >= 0.6 ? pr : 0.5*(pr + pb));
+                            // Optimization: send B/T=1 now, don't need to iterate over SED disk
+                            // (trick: pretend we're actually iterating over SED bulge now)
+                            if (pred_bt1 >= nmz*pthr) {
+                                if (nthread == 0) {
+                                    on_bulge_sed_changed(ised_d);
+                                }
 
-                                // Compute this galaxy's number density (per delta z)
-                                const double tprob = pbulge*pbt.safe[ibt];
+                                process(im, it, first_sed, ised_d,
+                                    bt.size()-1, pbt.safe[bt.size()-1]*pred_bt1, fdisk*0.0, fdisk);
+                            }
 
-                                // And forward to derived class.
-                                process(im, it, ised_d, ised_b, ibt, tprob, fdisk*bti, fbulge*btn);
+                            // Skip improbable SEDs
+                            if (pdisk < nmz*pthr) continue;
+
+                            // Integrate over bulge SED
+                            for (uint_t ised_b : range(use)) {
+                                if (!use.safe[ised_b]) continue;
+
+                                const uint_t ibuv = ised_b / use.dims[1];
+                                const uint_t ibvj = ised_b % use.dims[1];
+
+                                // Notify bulge SED has changed
+                                if (nthread == 0) {
+                                    on_bulge_sed_changed(ised_b);
+                                }
+
+                                // p(blue) * pdisk(d | z,M*) * N(M*,t,z)
+                                const double pb = pdisk*pblue.safe(ibuv,ibvj);
+                                const double pr = pdisk*pred.safe(ibuv,ibvj);
+
+                                // Skip improbable SEDs
+                                if (pb < pdisk*pthr && pr < pdisk*pthr) continue;
+
+                                // Load stuff
+                                const vec1d fbulge = mm*flux.safe(ibuv,ibvj,_);
+
+                                // Integrate over B/T (skipping B/T=0 and 1, already done above)
+                                for (uint_t ibt : range(1, bt.size()-1)) {
+                                    const double btn = bt.safe[ibt];
+                                    const double bti = 1.0 - btn;
+
+                                    // pbulge(b | z,M*,B/T)
+                                    const double pbulge = (btn >= 0.6 ? pr : 0.5*(pr + pb));
+
+                                    // Compute this galaxy's number density (per delta z)
+                                    const double tprob = pbulge*pbt.safe[ibt];
+
+                                    // And forward to derived class.
+                                    process(im, it, ised_d, ised_b, ibt, tprob, fdisk*bti, fbulge*btn);
+                                }
                             }
                         }
                     }

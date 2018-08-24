@@ -464,10 +464,12 @@ namespace egg {
                     "invalid SED library, SED column must have 2 or 3 dimensions");
 
                 if (cinfo.dims.size() == 2) {
+                    note("found a single SED library (no UVJ color binning)");
                     single_sed_library = true;
                     itbl.read_columns("use", single_use, "lam", single_lam,
                         "sed", single_sed, "type", single_type);
                 } else {
+                    note("found an EGG library (with UVJ color binning)");
                     single_sed_library = false;
                     itbl.read_columns(ftable(use, lam, sed, buv, bvj));
                 }
@@ -494,19 +496,21 @@ namespace egg {
             // Skip SEDs (if asked)
             seds_step = opts.seds_step;
             if (single_sed_library) {
+                for (uint_t ised : range(single_use)) {
+                    if (ised % seds_step != 0) {
+                        single_use.safe[ised] = false;
+                    }
+                }
+            } else {
                 for (uint_t iuv : range(use.dims[0]))
                 for (uint_t ivj : range(use.dims[1])) {
                     if ((iuv+ivj) % seds_step != 0) {
                         use.safe(iuv, ivj) = false;
                     }
                 }
-            } else {
-                for (uint_t ised : range(single_use)) {
-                    if (ised % seds_step != 0) {
-                        single_use.safe[ised] = false;
-                    }
-                }
             }
+
+            note("generating mock with ", count(use), " base SEDs");
 
             // Internal parameters
             flim = e10(0.4*(23.9 - opts.maglim));

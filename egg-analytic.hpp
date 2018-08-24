@@ -291,7 +291,6 @@ namespace egg {
         std::string filter_db = share_dir+"filter-db/db.dat";
         std::string sed_lib;
         std::string sed_lib_imf = "salpeter";
-        bool single_sed_library = false;
         bool filter_flambda = false;
         bool filter_photons = false;
         bool trim_filters = false;
@@ -455,11 +454,23 @@ namespace egg {
                 sed_file = opts.sed_lib;
             }
 
-            if (opts.single_sed_library) {
-                fits::read_table(sed_file, "use", single_use, "lam", single_lam,
-                    "sed", single_sed, "type", single_type);
-            } else {
-                fits::read_table(sed_file, ftable(use, lam, sed, buv, bvj));
+            {
+                fits::input_table itbl(sed_file);
+
+                fits::column_info cinfo;
+                phypp_check(itbl.read_column_info("sed", cinfo),
+                    "invalid SED library, must have SED column");
+                phypp_check(cinfo.dims.size() == 2 || cinfo.dims.size() == 3,
+                    "invalid SED library, SED column must have 2 or 3 dimensions");
+
+                if (cinfo.dims.size() == 2) {
+                    single_sed_library = true;
+                    itbl.read_columns("use", single_use, "lam", single_lam,
+                        "sed", single_sed, "type", single_type);
+                } else {
+                    single_sed_library = false;
+                    itbl.read_columns(ftable(use, lam, sed, buv, bvj));
+                }
             }
 
             // The SEDs in the library are given in Lsun/Msun.
@@ -474,7 +485,7 @@ namespace egg {
                 conv = e10(-0.2);
             }
 
-            if (opts.single_sed_library) {
+            if (single_sed_library) {
                 single_sed *= conv;
             } else {
                 sed *= conv;
@@ -482,7 +493,7 @@ namespace egg {
 
             // Skip SEDs (if asked)
             seds_step = opts.seds_step;
-            if (opts.single_sed_library) {
+            if (single_sed_library) {
                 for (uint_t iuv : range(use.dims[0]))
                 for (uint_t ivj : range(use.dims[1])) {
                     if ((iuv+ivj) % seds_step != 0) {
@@ -543,7 +554,6 @@ namespace egg {
             }
 
             strict_maglim = opts.strict_maglim;
-            single_sed_library = opts.single_sed_library;
 
             initialized = true;
         }

@@ -316,6 +316,7 @@ namespace egg {
         vec1b single_use;
         vec1u single_type;
         vec2d single_flux;
+        vec1d single_mass;
 
         // Mass function
         impl::csmf cs_mf;
@@ -468,6 +469,13 @@ namespace egg {
                     single_sed_library = true;
                     itbl.read_columns("use", single_use, "lam", single_lam,
                         "sed", single_sed, "type", single_type);
+
+                    if (itbl.read_column("mass", single_mass)) {
+                        note("SED library has a mass calibration");
+                    }
+
+                    buv.resize(2,0);
+                    bvj.resize(2,0);
                 } else {
                     note("found an EGG library (with UVJ color binning)");
                     single_sed_library = false;
@@ -501,6 +509,8 @@ namespace egg {
                         single_use.safe[ised] = false;
                     }
                 }
+
+                note("generating mock with ", count(single_use), " SEDs");
             } else {
                 for (uint_t iuv : range(use.dims[0]))
                 for (uint_t ivj : range(use.dims[1])) {
@@ -508,9 +518,9 @@ namespace egg {
                         use.safe(iuv, ivj) = false;
                     }
                 }
-            }
 
-            note("generating mock with ", count(use), " base SEDs");
+                note("generating mock with ", count(use), " disk and bulge SEDs");
+            }
 
             // Internal parameters
             flim = e10(0.4*(23.9 - opts.maglim));
@@ -704,7 +714,7 @@ namespace egg {
             }
 
             // Select probability threshold below which SEDs are ignored
-            const uint_t nsed = count(use);
+            const uint_t nsed = (single_sed_library ? count(single_use) : count(use));
             const double pthr = 0.1/nsed;
 
             // Find minimum mass we need to bother with
@@ -765,19 +775,42 @@ namespace egg {
                         const double nmz = dz*dm*dvdz*(it == 0 ?
                             cs_mf.evaluate_qu(m.safe[im], zf) : cs_mf.evaluate_sf(m.safe[im], zf));
 
-                        for (uint_t ised : range(single_use)) {
-                            if (!use.safe[ised] || single_type.safe[ised] != it) continue;
-
-                            // Notify disk SED has changed
-                            if (nthread == 0) {
-                                on_disk_sed_changed(ised);
+                        if (!single_mass.empty()) {
+                            // We have a mass calibration, pick the SEDs with masses within our bin
+                            vec1u imass = where(abs(single_mass - m.safe[im]) < 0.5*dm);
+                            if (imass.empty()) {
+                                // No SED with this mass, pick the closest one
+                                uint_t iclose = min_id(abs(m.safe[im] - single_mass));
+                                imass = where(abs(single_mass - single_mass[iclose]) < 0.5*dm);
                             }
 
-                            // Load flux
-                            const vec1d fdisk = mm*single_flux.safe(ised,_);
+                            for (uint_t ised : imass) {
+                                // Notify disk SED has changed
+                                if (nthread == 0) {
+                                    on_disk_sed_changed(ised);
+                                }
 
-                            // Forward to derived class
-                            process(im, it, ised, first_sed, 0, nmz/nsed, fdisk, fdisk*0.0);
+                                // Load flux
+                                const vec1d fdisk = mm*single_flux.safe(ised,_);
+
+                                // Forward to derived class
+                                process(im, it, ised, first_sed, 0, nmz, fdisk, fdisk*0.0);
+                            }
+                        } else {
+                            for (uint_t ised : range(single_use)) {
+                                if (!single_use.safe[ised] || single_type.safe[ised] != it) continue;
+
+                                // Notify disk SED has changed
+                                if (nthread == 0) {
+                                    on_disk_sed_changed(ised);
+                                }
+
+                                // Load flux
+                                const vec1d fdisk = mm*single_flux.safe(ised,_);
+
+                                // Forward to derived class
+                                process(im, it, ised, first_sed, 0, nmz/nsed, fdisk, fdisk*0.0);
+                            }
                         }
                     }
                 } else {

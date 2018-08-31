@@ -181,6 +181,7 @@ namespace egg {
                 p_phistar2 = {0.00154472, 0.00104263, 0.000624682, 0.000173119, 0.000122278, 3.00000e-05};
                 p_index2 = {-0.481039, 0.0594024, 0.296244, -0.166611, -0.263124, -0.300000};
 
+                // Baldry et al. z=0
                 prepend(zu,         vec1d{min(zl)});
                 prepend(zl,         vec1d{0.0});
 
@@ -193,10 +194,10 @@ namespace egg {
 
                 prepend(p_mstar1,   vec1d{10.72 + 0.25});
                 prepend(p_mstar2,   vec1d{10.72 + 0.25});
-                prepend(p_phistar1, vec1d{3.25e-3});
-                prepend(p_phistar2, vec1d{0.08e-3});
-                prepend(p_index1,   vec1d{-0.45});
-                prepend(p_index2,   vec1d{-1.45});
+                prepend(p_phistar1, vec1d{0.08e-3});
+                prepend(p_phistar2, vec1d{3.25e-3});
+                prepend(p_index1,   vec1d{-1.45});
+                prepend(p_index2,   vec1d{-0.45});
 
                 // Note: z > 4.0 is obtained by keeping the shape of the last redshift bin and
                 //       decreasing phistar, following the total stellar mass density of

@@ -632,7 +632,9 @@ namespace egg {
                 const vec1d a1 = -0.34 + 0.3*max(m - 10.35, 0.0);
                 return min(a0 + a1*min(zf, 3.3), 2.0);
             }();
-            const vec1d asig = 0.1 + 0.3*clamp(zf-1.0, 0, 1)*(0.17 + clamp(1.0 - abs(m - 10.3), 0, 1));
+            const vec1d asig = 0.2 + (0.25 + 0.12*clamp((zf-0.5)/2.0, 0.0, 1.0))*
+                max(1.0 - 2*abs(m - (10.0 + erf(zf - 1.5)*0.4 + 0.3)), 0.0);
+
             const vec1d bbar = 0.1*(m - 11.0);
 
             const double col_cor = 0.2*(zf < 0.5 ? (0.5 - zf)/0.5 : 0.0);
@@ -821,8 +823,8 @@ namespace egg {
                     vec2d pblue(use.dims); {
                         vec1d pa = gaussian(a, abar.safe[im], asig.safe[im]);
                         for (uint_t ia : range(a)) {
-                            vec1d puv = gaussian(uv, 2*col_cor + 0.45 + 0.545*a.safe[ia], 0.12);
-                            vec1d pvj = gaussian(vj,   col_cor +        0.838*a.safe[ia], 0.12);
+                            vec1d puv = gaussian(uv, 2*col_cor + 0.45 + 0.545*a.safe[ia], 0.15);
+                            vec1d pvj = gaussian(vj,   col_cor +        0.838*a.safe[ia], 0.15);
                             for (uint_t iuv : range(uv))
                             for (uint_t ivj : range(vj)) {
                                 pblue.safe(iuv,ivj) += puv.safe[iuv]*pvj.safe[ivj]*pa.safe[ia];

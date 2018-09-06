@@ -877,7 +877,7 @@ namespace egg {
                             }
 
                             // pdisk(d | z,M*) * N(M*,t,z)
-                            const double pdisk = nmz*pblue.safe(iduv, idvj);
+                            const double pdisk = nmz*(it == 0 ? pred.safe(iduv, idvj) : pblue.safe(iduv, idvj));
                             const double pred_bt1 = nmz*pred.safe(iduv, idvj);
 
                             // Load stuff
@@ -931,7 +931,7 @@ namespace egg {
                                     const double bti = 1.0 - btn;
 
                                     // pbulge(b | z,M*,B/T)
-                                    const double pbulge = (btn >= 0.6 ? pr : 0.5*(pr + pb));
+                                    const double pbulge = (btn >= 0.6 || it == 0 ? pr : 0.5*(pr + pb));
 
                                     // Compute this galaxy's number density (per delta z)
                                     const double tprob = pbulge*pbt.safe[ibt];

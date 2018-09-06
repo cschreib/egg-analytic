@@ -349,6 +349,8 @@ namespace egg {
         vec1d uv, vj;
         vec1d bt;
         uint_t seds_step = 1;
+        const double bmin = -0.1;
+        const double bmax = 0.2;
 
         // Base distributions
         static double gaussian_integrate(double x1, double x2, double mu, double sigma) {
@@ -534,7 +536,7 @@ namespace egg {
             nm = e10(m);
 
             a  = rgen(-5.0, 6.0, opts.a_steps);
-            b  = rgen(-0.1, 0.2, opts.b_steps);
+            b  = rgen(bmin, bmax, opts.b_steps);
 
             uv = bin_center(buv);
             vj = bin_center(bvj);
@@ -837,9 +839,10 @@ namespace egg {
 
                     // pred
                     vec2d pred(use.dims); {
-                        vec1d pb = gaussian(b, bbar.safe[im], 0.1);
-                        pb.safe[0]           += lower_gaussian(-0.1, bbar.safe[im], 0.10);
-                        pb.safe[pb.size()-1] += upper_gaussian( 0.2, bbar.safe[im], 0.10);
+                        const double bsig = 0.1;
+                        vec1d pb = gaussian(b, bbar.safe[im], bsig);
+                        pb.safe[0]           += lower_gaussian(bmin, bbar.safe[im], bsig);
+                        pb.safe[pb.size()-1] += upper_gaussian(bmax, bbar.safe[im], bsig);
                         for (uint_t ib : range(b)) {
                             vec1d puv = gaussian(uv, 2*col_cor + 1.85 + 0.88*b.safe[ib], 0.10);
                             vec1d pvj = gaussian(vj,   col_cor + 1.25 +      b.safe[ib], 0.10);

@@ -326,6 +326,8 @@ namespace egg {
         double flim = dnan;
         cosmo_t cosmo;
         double area = dnan;
+        bool use_prob_cut = false;
+        double prob_cut = dnan;
 
         // Config
         filter_db_t filter_db;
@@ -744,6 +746,10 @@ namespace egg {
 
                 if (strict_maglim && tfdisk.safe[0] + tfbulge.safe[0] < flim) {
                     // Do not send galaxies below the magnitude limit
+                    return;
+                }
+                if (use_prob_cut && tngal < prob_cut) {
+                    // Do not send galaxies below the probability threshold
                     return;
                 }
 

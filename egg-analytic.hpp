@@ -1,6 +1,9 @@
-#include <phypp.hpp>
+#include <vif.hpp>
 
-namespace phypp {
+using namespace vif;
+using namespace vif::astro;
+
+namespace vif {
 namespace thread {
     template<typename W, typename T>
     struct worker_with_workspace {
@@ -207,8 +210,8 @@ namespace egg {
                 uint_t nhzb = ceil((zmax - max(zu))/0.2);
                 double dhz = (zmax - max(zu))/nhzb;
 
-                append(zl, dindgen(nhzb)*dhz + max(zu));
-                append(zu, dindgen(nhzb)*dhz + max(zu) + dhz);
+                append(zl, indgen<double>(nhzb)*dhz + max(zu));
+                append(zu, indgen<double>(nhzb)*dhz + max(zu) + dhz);
 
                 auto g15_rhostar = vectorize_lambda([](double z){
                     return (z < 6 ? e10(-0.43*z) : e10(-0.43*6.0)*e10(-0.7*(z-6.0)));
@@ -418,7 +421,7 @@ namespace egg {
             // Truncate
             if (trim_filters) {
                 vec1u idg = where(fil.res/max(fil.res) > 1e-3);
-                phypp_check(!idg.empty(), "filter '", band, "' has no usable data");
+                vif_check(!idg.empty(), "filter '", band, "' has no usable data");
                 fil.lam = fil.lam[idg[0]-_-idg[-1]];
                 fil.res = fil.res[idg[0]-_-idg[-1]];
             }
@@ -443,9 +446,9 @@ namespace egg {
         }
 
         void initialize(const generator_options& opts) {
-            phypp_check(!opts.selection_band.empty(),
+            vif_check(!opts.selection_band.empty(),
                 "please provide the name of the selection band in the options");
-            phypp_check(is_finite(opts.maglim),
+            vif_check(is_finite(opts.maglim),
                 "please provide the value for the magnitude limit in the options");
 
             // Read SED library
@@ -464,9 +467,9 @@ namespace egg {
                 fits::input_table itbl(sed_file);
 
                 fits::column_info cinfo;
-                phypp_check(itbl.read_column_info("sed", cinfo),
+                vif_check(itbl.read_column_info("sed", cinfo),
                     "invalid SED library, must have SED column");
-                phypp_check(cinfo.dims.size() == 2 || cinfo.dims.size() == 3,
+                vif_check(cinfo.dims.size() == 2 || cinfo.dims.size() == 3,
                     "invalid SED library, SED column must have 2 or 3 dimensions");
 
                 if (cinfo.dims.size() == 2) {
@@ -553,14 +556,14 @@ namespace egg {
 
             // Find selection filter
             selection_band = opts.selection_band;
-            phypp_check(read_filter(selection_band, selection_filter),
+            vif_check(read_filter(selection_band, selection_filter),
                 "could not find selection filter, aborting");
 
             // Find flux filters
             bands = opts.filters;
             filters.resize(bands.size());
             for (uint_t l : range(bands)) {
-                phypp_check(read_filter(bands[l], filters[l]),
+                vif_check(read_filter(bands[l], filters[l]),
                     "could not find filter '", bands[l], "', aborting");
             }
 
@@ -628,7 +631,7 @@ namespace egg {
         };
 
         void generate(double zf, double dz) {
-            phypp_check(initialized, "please first call initialize() with your desired survey setup");
+            vif_check(initialized, "please first call initialize() with your desired survey setup");
 
             // Pre-compute stuff
             const vec1d abar = [&]() {

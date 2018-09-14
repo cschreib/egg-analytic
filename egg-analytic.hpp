@@ -255,6 +255,13 @@ namespace egg {
                     interpolate(a_index2, zc, z),
                     max(interpolate(a_phistar2, zc, z), 0.0)
                 );
+
+                // double mstar = 10.92 + 0.579*erf(0.530*(z - 3.87));
+                // double i1 = -1.70 + 0.436*erf(8.76*(0.612 - log10(1.0+z)));
+                // double i2 = 0.901;
+                // double phi1 = e10(0.358 - 0.116*sqr(z));
+                // double phi2 = e10(0.163 - 0.274*z - 3.91e-5*exp(3.13*z));
+                // return schechter2(m - 0.2, mstar, i1, phi1, mstar, i2, phi2);
             }
 
             double evaluate_qu(double m, double z) {
@@ -266,6 +273,13 @@ namespace egg {
                     interpolate(p_index2, zc, z),
                     max(interpolate(p_phistar2, zc, z), 0.0)
                 );
+
+                // double mstar = 10.59 - 0.492*erf(0.539*(z - 1.43));
+                // double i1 = 0.241 + 0.487*erf(3.53*(z - 1.133));
+                // double i2 = -1.38;
+                // double phi1 = e10(0.0553 - 3.04*z);
+                // double phi2 = e10(-0.812 - 0.188*exp(2.46*z));
+                // return schechter2(m - 0.2, mstar, i1, phi1, mstar, i2, phi2);
             }
         };
     }

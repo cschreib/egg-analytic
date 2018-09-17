@@ -487,7 +487,7 @@ namespace egg {
                     "invalid SED library, SED column must have 2 or 3 dimensions");
 
                 if (cinfo.dims.size() == 2) {
-                    note("found a single SED library (no UVJ color binning)");
+                    note("found a 1D SED library (no UVJ color binning)");
                     single_sed_library = true;
                     itbl.read_columns("use", single_use, "lam", single_lam,
                         "sed", single_sed, "type", single_type);

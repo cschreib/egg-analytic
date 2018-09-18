@@ -2,6 +2,7 @@
 #define EGG_ANALYTIC_INCLUDED
 
 #include <vif.hpp>
+#include "filters.hpp"
 
 using namespace vif;
 using namespace vif::astro;
@@ -156,18 +157,67 @@ namespace egg {
 
         // Resources
         std::string share_dir = "./";
-        std::string filter_db = share_dir+"filter-db/db.dat";
         std::string sed_lib;
         std::string sed_lib_imf = "salpeter";
-        bool filter_flambda = false;
-        bool filter_photons = false;
-        bool trim_filters = false;
 
         // Execution policy
         uint_t nthread = 0;
         uint_t max_queued_models = npos;
         bool strict_maglim = true;
     };
+
+    // Base distributions
+    double gaussian_integrate(double x1, double x2, double mu, double sigma) {
+        // Sample (incorect!)
+        // return exp(-sqr(x-mu)/(2.0*sqr(sigma)))/(sigma*sqrt(2*dpi));
+
+        // Integrate
+        return 0.5*(erf((x2 - mu)/(sigma*sqrt(2.0))) - erf((x1 - mu)/(sigma*sqrt(2.0))));
+    }
+
+    vec1d gaussian(const vec1d& x, double mu, double sigma) {
+        vec1d ret(x.dims);
+        for (uint_t ix : range(x)) {
+            const double x1 = (ix == 0          ? x.safe[ix] : 0.5*(x.safe[ix] + x.safe[ix-1]));
+            const double x2 = (ix == x.size()-1 ? x.safe[ix] : 0.5*(x.safe[ix] + x.safe[ix+1]));
+            ret.safe[ix] = gaussian_integrate(x1, x2, mu, sigma);
+        }
+
+        return ret;
+    }
+
+    double lognormal_integrate(double x1, double x2, double mu, double sigma) {
+        // Sample (incorect!)
+        // return exp(-sqr(log(x/mu))/(2.0*sqr(sigma)))/(x*sigma*sqrt(2*dpi));
+
+        // Integrate
+        double up = erf(log(x2/mu)/(sigma*sqrt(2.0)));
+        double low = (x1 > 0.0 ? erf(log(x1/mu)/(sqrt(2.0)*sigma)) : -1.0);
+        return 0.5*(up - low);
+    }
+
+    vec1d lognormal(const vec1d& x, double mu, double sigma) {
+        vec1d ret(x.dims);
+        for (uint_t ix : range(x)) {
+            const double x1 = (ix == 0          ? x.safe[ix] : 0.5*(x.safe[ix] + x.safe[ix-1]));
+            const double x2 = (ix == x.size()-1 ? x.safe[ix] : 0.5*(x.safe[ix] + x.safe[ix+1]));
+            ret.safe[ix] = lognormal_integrate(x1, x2, mu, sigma);
+        }
+
+        return ret;
+    }
+
+    double upper_lognormal(double xlow, double mu, double sigma) {
+        return 0.5 - 0.5*erf(log(xlow/mu)/(sigma*sqrt(2.0)));
+    }
+
+    double upper_gaussian(double xlow, double mu, double sigma) {
+        return 0.5 - 0.5*erf((xlow - mu)/(sigma*sqrt(2.0)));
+    }
+
+    double lower_gaussian(double xup, double mu, double sigma) {
+        return 0.5 + 0.5*erf((xup - mu)/(sigma*sqrt(2.0)));
+    }
 
     class generator {
     public :
@@ -197,16 +247,12 @@ namespace egg {
         double prob_cut = dnan;
 
         // Config
-        filter_db_t filter_db;
-        std::string filter_db_file;
+        filter_database& filter_db;
         std::string selection_band;
         filter_t selection_filter;
         vec1s bands;
         vec<1,filter_t> filters;
         bool naive_igm = false;
-        bool filter_flambda = false;
-        bool filter_photons = false;
-        bool trim_filters = false;
         uint_t nthread = 0;
         uint_t max_queued_models = npos;
         bool strict_maglim = true;
@@ -222,93 +268,9 @@ namespace egg {
         const double bmin = -0.1;
         const double bmax = 0.2;
 
-        // Base distributions
-        static double gaussian_integrate(double x1, double x2, double mu, double sigma) {
-            // Sample (incorect!)
-            // return exp(-sqr(x-mu)/(2.0*sqr(sigma)))/(sigma*sqrt(2*dpi));
+        explicit generator(filter_database& db) : filter_db(db) {}
 
-            // Integrate
-            return 0.5*(erf((x2 - mu)/(sigma*sqrt(2.0))) - erf((x1 - mu)/(sigma*sqrt(2.0))));
-        }
-
-        static vec1d gaussian(const vec1d& x, double mu, double sigma) {
-            vec1d ret(x.dims);
-            for (uint_t ix : range(x)) {
-                const double x1 = (ix == 0          ? x.safe[ix] : 0.5*(x.safe[ix] + x.safe[ix-1]));
-                const double x2 = (ix == x.size()-1 ? x.safe[ix] : 0.5*(x.safe[ix] + x.safe[ix+1]));
-                ret.safe[ix] = gaussian_integrate(x1, x2, mu, sigma);
-            }
-
-            return ret;
-        }
-
-        static double lognormal_integrate(double x1, double x2, double mu, double sigma) {
-            // Sample (incorect!)
-            // return exp(-sqr(log(x/mu))/(2.0*sqr(sigma)))/(x*sigma*sqrt(2*dpi));
-
-            // Integrate
-            double up = erf(log(x2/mu)/(sigma*sqrt(2.0)));
-            double low = (x1 > 0.0 ? erf(log(x1/mu)/(sqrt(2.0)*sigma)) : -1.0);
-            return 0.5*(up - low);
-        }
-
-        static vec1d lognormal(const vec1d& x, double mu, double sigma) {
-            vec1d ret(x.dims);
-            for (uint_t ix : range(x)) {
-                const double x1 = (ix == 0          ? x.safe[ix] : 0.5*(x.safe[ix] + x.safe[ix-1]));
-                const double x2 = (ix == x.size()-1 ? x.safe[ix] : 0.5*(x.safe[ix] + x.safe[ix+1]));
-                ret.safe[ix] = lognormal_integrate(x1, x2, mu, sigma);
-            }
-
-            return ret;
-        }
-
-        static double upper_lognormal(double xlow, double mu, double sigma) {
-            return 0.5 - 0.5*erf(log(xlow/mu)/(sigma*sqrt(2.0)));
-        }
-
-        static double upper_gaussian(double xlow, double mu, double sigma) {
-            return 0.5 - 0.5*erf((xlow - mu)/(sigma*sqrt(2.0)));
-        }
-
-        static double lower_gaussian(double xup, double mu, double sigma) {
-            return 0.5 + 0.5*erf((xup - mu)/(sigma*sqrt(2.0)));
-        }
-
-        generator() = default;
         virtual ~generator() = default;
-
-        bool read_filter(const std::string& band, filter_t& fil) const {
-            if (!get_filter(filter_db, band, fil)) {
-                return false;
-            }
-
-            // Truncate
-            if (trim_filters) {
-                vec1u idg = where(fil.res/max(fil.res) > 1e-3);
-                vif_check(!idg.empty(), "filter '", band, "' has no usable data");
-                fil.lam = fil.lam[idg[0]-_-idg[-1]];
-                fil.res = fil.res[idg[0]-_-idg[-1]];
-            }
-
-            // Apply filter definition
-            if (filter_flambda) {
-                // Filter is defined such that it must integrate f_lambda and not f_nu
-                // f_lambda*r(lambda) ~ f_nu*[r(lambda)/lambda^2]
-                fil.res /= sqr(fil.lam);
-            }
-            if (filter_photons) {
-                // Filter is defined such that it integrates photons and not energy
-                // n(lambda)*r(lambda) ~ f(lambda)*[r(lambda)*lambda]
-                fil.res *= fil.lam;
-            }
-
-            // Re-normalize filter
-            fil.res /= integrate(fil.lam, fil.res);
-            fil.rlam = integrate(fil.lam, fil.lam*fil.res);
-
-            return true;
-        }
 
         void initialize(const generator_options& opts) {
             vif_check(!opts.selection_band.empty(),
@@ -413,24 +375,15 @@ namespace egg {
 
             bt = rgen(0.0, 1.0, opts.bt_steps);
 
-            // Read filter library
-            filter_db_file = opts.filter_db;
-            filter_db = read_filter_db(opts.filter_db);
-            filter_flambda = opts.filter_flambda;
-            filter_photons = opts.filter_photons;
-            trim_filters = opts.trim_filters;
-
             // Find selection filter
             selection_band = opts.selection_band;
-            vif_check(read_filter(selection_band, selection_filter),
-                "could not find selection filter in '", filter_db_file, "'");
+            selection_filter = filter_db.read_filter(selection_band);
 
             // Find flux filters
             bands = opts.filters;
             filters.resize(bands.size());
             for (uint_t l : range(bands)) {
-                vif_check(read_filter(bands[l], filters[l]),
-                    "could not find filter '", bands[l], "' in '", filter_db_file, "'");
+                filters[l] = filter_db.read_filter(bands[l]);
             }
 
             // Other parameters

@@ -198,6 +198,7 @@ namespace egg {
 
         // Config
         filter_db_t filter_db;
+        std::string filter_db_file;
         std::string selection_band;
         filter_t selection_filter;
         vec1s bands;
@@ -413,6 +414,7 @@ namespace egg {
             bt = rgen(0.0, 1.0, opts.bt_steps);
 
             // Read filter library
+            filter_db_file = opts.filter_db;
             filter_db = read_filter_db(opts.filter_db);
             filter_flambda = opts.filter_flambda;
             filter_photons = opts.filter_photons;
@@ -421,14 +423,14 @@ namespace egg {
             // Find selection filter
             selection_band = opts.selection_band;
             vif_check(read_filter(selection_band, selection_filter),
-                "could not find selection filter, aborting");
+                "could not find selection filter in '", filter_db_file, "'");
 
             // Find flux filters
             bands = opts.filters;
             filters.resize(bands.size());
             for (uint_t l : range(bands)) {
                 vif_check(read_filter(bands[l], filters[l]),
-                    "could not find filter '", bands[l], "', aborting");
+                    "could not find filter '", bands[l], "' in '", filter_db_file, "'");
             }
 
             // Other parameters

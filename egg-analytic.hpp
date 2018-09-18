@@ -1,3 +1,6 @@
+#ifndef EGG_ANALYTIC_INCLUDED
+#define EGG_ANALYTIC_INCLUDED
+
 #include <vif.hpp>
 
 using namespace vif;
@@ -820,3 +823,5 @@ namespace egg {
         }
     };
 }
+
+#endif
